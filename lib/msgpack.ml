@@ -249,3 +249,95 @@ let decode (s : string) : (t, error) result =
     match () with
     | () when Reader.remaining r = 0 -> Ok v
     | () -> Error (Trailing { extra = Reader.remaining r }))
+
+(* M9: egress encoding. Minimal (spec-canonical) headers: the smallest
+   family that fits the value, so [decode (encode v)] is [Ok v] for
+   every [v] the decoder can produce and non-minimal input normalizes
+   on the way out. Encoding is total; a value that breaks a decode
+   invariant from outside (a string over [Caps.string_max], duplicate
+   map keys) still encodes and the decoder is the one that rejects it —
+   the gate only ever encodes values that arrived through [decode].
+   [Uint64_edge] carries exactly 8 raw big-endian bytes by decoder
+   construction and re-emits under 0xcf; floats re-emit bit-exact as
+   float64; the signed ext type byte re-wraps through [Bytesx.chr]'s
+   mask. *)
+
+let be (width : int) (n : int) : string =
+  String.init width (fun i -> Bytesx.chr (n lsr (8 * (width - 1 - i))))
+
+let be64 (v : int64) : string =
+  String.init 8 (fun i ->
+    Bytesx.chr (Int64.to_int (Int64.shift_right_logical v (8 * (7 - i)))))
+
+let lead (b : int) : string = String.make 1 (Bytesx.chr b)
+
+let encode_int (n : int) : string =
+  match () with
+  | () when n >= 0 ->
+    (match () with
+     | () when n <= 0x7f -> be 1 n
+     | () when n <= 0xff -> lead 0xcc ^ be 1 n
+     | () when n <= 0xffff -> lead 0xcd ^ be 2 n
+     | () when n <= 0xffffffff -> lead 0xce ^ be 4 n
+     | () -> lead 0xcf ^ be64 (Int64.of_int n))
+  | () when n >= -32 -> be 1 n
+  | () when n >= -0x80 -> lead 0xd0 ^ be 1 n
+  | () when n >= -0x8000 -> lead 0xd1 ^ be 2 n
+  | () when n >= -0x80000000 -> lead 0xd2 ^ be 4 n
+  | () -> lead 0xd3 ^ be64 (Int64.of_int n)
+
+let str_header (len : int) : string =
+  match () with
+  | () when len <= 31 -> lead (0xa0 lor len)
+  | () when len <= 0xff -> lead 0xd9 ^ be 1 len
+  | () when len <= 0xffff -> lead 0xda ^ be 2 len
+  | () -> lead 0xdb ^ be 4 len
+
+let bin_header (len : int) : string =
+  match () with
+  | () when len <= 0xff -> lead 0xc4 ^ be 1 len
+  | () when len <= 0xffff -> lead 0xc5 ^ be 2 len
+  | () -> lead 0xc6 ^ be 4 len
+
+let arr_header (n : int) : string =
+  match () with
+  | () when n <= 15 -> lead (0x90 lor n)
+  | () when n <= 0xffff -> lead 0xdc ^ be 2 n
+  | () -> lead 0xdd ^ be 4 n
+
+let map_header (n : int) : string =
+  match () with
+  | () when n <= 15 -> lead (0x80 lor n)
+  | () when n <= 0xffff -> lead 0xde ^ be 2 n
+  | () -> lead 0xdf ^ be 4 n
+
+(* Exact fixext sizes first; everything else takes the smallest ext
+   header. The type byte follows the length header in both shapes. *)
+let ext_header (len : int) (ty : int) : string =
+  let tb = lead ty in
+  match () with
+  | () when len = 1 -> lead 0xd4 ^ tb
+  | () when len = 2 -> lead 0xd5 ^ tb
+  | () when len = 4 -> lead 0xd6 ^ tb
+  | () when len = 8 -> lead 0xd7 ^ tb
+  | () when len = 16 -> lead 0xd8 ^ tb
+  | () when len <= 0xff -> lead 0xc7 ^ be 1 len ^ tb
+  | () when len <= 0xffff -> lead 0xc8 ^ be 2 len ^ tb
+  | () -> lead 0xc9 ^ be 4 len ^ tb
+
+let rec encode (v : t) : string =
+  match v with
+  | Nil -> lead 0xc0
+  | Bool false -> lead 0xc2
+  | Bool true -> lead 0xc3
+  | Int n -> encode_int n
+  | Uint64_edge b -> lead 0xcf ^ b
+  | Float f -> lead 0xcb ^ be64 (Int64.bits_of_float f)
+  | Str s -> str_header (String.length s) ^ s
+  | Bin b -> bin_header (String.length b) ^ b
+  | Arr items ->
+    arr_header (List.length items) ^ String.concat "" (List.map encode items)
+  | Map pairs ->
+    map_header (List.length pairs)
+    ^ String.concat "" (List.map (fun (k, w) -> encode k ^ encode w) pairs)
+  | Ext (ty, data) -> ext_header (String.length data) ty ^ data

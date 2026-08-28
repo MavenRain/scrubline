@@ -1,4 +1,4 @@
 (library
  (name scrubline)
  (public_name scrubline)
- (modules gate_core caps err reader utf8 msgpack))
+ (modules gate_core caps err reader utf8 bytesx msgpack))

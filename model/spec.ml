@@ -51,13 +51,23 @@ let specs : spec list =
          (Imp
             ( And (Atom Frame.Dirty, Atom Frame.Emitted_any),
               Atom Frame.Emitted_scrubbed )));
-    (* S6: downstream needs no scanner of its own. *)
+    (* S6: downstream needs no scanner of its own. Extensionally this
+       coincides with S1: the Downstream view partitions worlds into
+       emitted vs pending, so K_downstream Safe is the single bit "every
+       emitted world is Safe" and no step or route edit separates the
+       two verdicts. S6 stays because it pins the epistemic reading
+       through the actual Know machinery, and F3 exhibits the frame
+       where that knowledge fails. *)
     g "s6-downstream-knows-safe"
       (Ag
          (Imp
             ( Atom Frame.Emitted_any,
               Know (Frame.Downstream, Atom Frame.Safe) )));
-    (* S9: no deadlock; terminals self-loop. *)
+    (* S9: no deadlock; terminals self-loop. Known limit: [gate_next]
+       is a syntactic singleton (every arm returns a one-element list),
+       so no mutation of [Gate_core.step] can falsify this formula; its
+       content is the self-loop convention itself, held closed by the
+       cube sweep in test_correspondence. *)
     g "s9-no-deadlock" (Ag (Ex Tt));
     (* S10: the gate does not mangle clean logs. *)
     g "s10-clean-identity"
@@ -106,7 +116,22 @@ let specs : spec list =
         (Ef
            (And
               ( Atom Frame.Emitted_any,
-                Not (Know (Frame.Downstream, Atom Frame.Safe)) )))
+                Not (Know (Frame.Downstream, Atom Frame.Safe)) )));
+      (* F4: S3's hazard. A filter that cannot parse still forwards. *)
+      ft "f4-malformed-passthrough-reachable"
+        (Ef (And (Atom Frame.Is_malformed, Atom Frame.Emitted_any)));
+      (* F5: the oversized clause of [safe]. A filter that never
+         measures its input forwards the allocation bomb. *)
+      ft "f5-oversized-passthrough-reachable"
+        (Ef (And (Atom Frame.Is_oversized, Atom Frame.Emitted_any)));
+      (* F6: S4's hazard. A crashed agent holds the record forever:
+         some future never reaches emit or DLQ. *)
+      ft "f6-hang-reachable"
+        (Ef
+           (And
+              ( Atom Frame.Is_record,
+                Not (Af (Or (Atom Frame.Emitted_any, Atom Frame.Dead_any)))
+              )))
     ]
 
 type outcome = {

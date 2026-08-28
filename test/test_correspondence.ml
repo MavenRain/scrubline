@@ -113,7 +113,7 @@ let size_errors : string list =
     else [ Printf.sprintf "%s states: %d, want %d" name got want ]
   in
   expect "gate" (Topos.size gsys.Ctlk.space) 48
-  @ expect "filter" (Topos.size fsys.Ctlk.space) 66
+  @ expect "filter" (Topos.size fsys.Ctlk.space) 70
 
 let () =
   let errors =

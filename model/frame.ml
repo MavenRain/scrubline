@@ -33,8 +33,10 @@ let gate_next (w : world) : world list =
 
 (* Filter frame, classified dispatch. Malformed input can crash the
    process, pass through unparsed, or land in a dead pile; oversized
-   input can crash the allocator; invalid UTF-8 sails past a byte
-   regex. *)
+   input can crash the allocator or sail through a filter that never
+   measures it; invalid UTF-8 sails past a byte regex. Every sensitive
+   class must reach an unscrubbed emit somewhere in this frame, or the
+   corresponding clause of [safe] is vacuous (F4/F5 pin this). *)
 let filter_classified (r : Gc.world) : Gc.world list =
   let open Gc in
   match r.input with
@@ -44,7 +46,9 @@ let filter_classified (r : Gc.world) : Gc.world list =
       { r with stage = Emitted { scrubbed = false } };
       { r with stage = Dead (Dead_malformed m) } ]
   | Oversized v ->
-    [ { r with stage = Crashed }; { r with stage = Dead (Dead_oversized v) } ]
+    [ { r with stage = Crashed };
+      { r with stage = Emitted { scrubbed = false } };
+      { r with stage = Dead (Dead_oversized v) } ]
   | Bad_utf8 e ->
     [ { r with stage = Emitted { scrubbed = false } };
       { r with stage = Dead (Dead_bad_utf8 e) } ]
@@ -70,8 +74,9 @@ let filter_next (w : world) : world list =
 
 (* Observation maps. Downstream sees only that a record was emitted:
    not the gate internals, not the DLQ, not the payload flags. The
-   operator sees the metrics surface: the terminal stage and the
-   dead-letter reason tag (and a crash, which is process-visible). *)
+   operator sees the metrics surface: the terminal stage including the
+   scrub bit (the shipped counters split scrubbed from unscrubbed) and
+   the dead-letter reason tag (and a crash, which is process-visible). *)
 let view (ag : agent) (w : world) : string =
   match ag with
   | Downstream ->
@@ -87,7 +92,9 @@ let view (ag : agent) (w : world) : string =
      | Source -> "operator:run"
      | Rec r ->
        (match r.Gc.stage with
-        | Gc.Emitted _ -> "operator:emitted"
+        | Gc.Emitted { scrubbed } ->
+          if scrubbed then "operator:emitted:scrubbed"
+          else "operator:emitted:unscrubbed"
         | Gc.Dead d -> "operator:dlq:" ^ Gc.reason_tag d
         | Gc.Crashed -> "operator:crashed"
         | Gc.Ingested | Gc.Classified | Gc.Scanned _ -> "operator:run"))
@@ -214,6 +221,7 @@ type atom =
   | Dirty
   | Clean_valid
   | Is_malformed
+  | Is_oversized
   | Safe
   | Routed_terminal of Gc.input_class
 
@@ -237,6 +245,7 @@ let den (a : atom) : world T.sub =
   | Dirty -> on_input w input_dirty
   | Clean_valid -> on_input w input_clean_valid
   | Is_malformed -> on_input w input_malformed
+  | Is_oversized -> on_input w input_oversized
   | Safe -> safe w
   | Routed_terminal i ->
     on_input w (fun j -> Stdlib.compare i j = 0)

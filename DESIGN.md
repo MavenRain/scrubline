@@ -201,10 +201,21 @@ Checked properties (`test/test_model.ml`, exit code is the gate):
 | F1 | EF (dirty and emitted-unscrubbed) : under-redaction reachable | Filter | true |
 | F2 | EF crashed : the CVE class | Filter | true |
 | F3 | EF (emitted and not K_downstream safe) | Filter | true |
+| F4 | EF (malformed and emitted) : S3's hazard is representable | Filter | true |
+| F5 | EF (oversized and emitted) : the allocation-bomb passthrough behind the oversized clause of `safe` | Filter | true |
+| F6 | EF (record and not AF (emitted or dead)) : S4's hazard, a record held forever | Filter | true |
 
 Expected-false specs print a witness (`Witness.explain`: shortest E-path,
 successor dump, or confusion pair). A checker that passes a negative
 control is broken, and the runner treats that as a suite failure.
+
+Known limits, held on purpose: S6 is extensionally S1 (the Downstream
+view partitions worlds into emitted vs pending, so the K class bit is
+exactly "every emitted world is safe"); it stays for the epistemic
+reading, with F3 as its frame-side control. S9 cannot be falsified by
+any `step` mutation (`gate_next` returns a singleton in every arm); the
+self-loop convention it names is held closed by the cube sweep in
+`test_correspondence`.
 
 `test/test_correspondence.ml` pins the model to the code: an independent
 hand-written mirror of the routing table, the `step` orbit against `route`
@@ -258,7 +269,7 @@ Phase B: typed decode.
 | M6 | `utf8.ml` total validator + corpus (overlong, surrogate, out-of-range, truncation) | DONE |
 | M7 | msgpack scalar decode (nil, bool, int families with 64-bit edges, float, str/bin headers) + tests | DONE |
 | M8 | msgpack containers: array/map/ext + EventTime, depth and count caps, duplicate-key reject + tests | DONE |
-| M9 | msgpack encode for egress + roundtrip tests | TODO |
+| M9 | msgpack encode for egress + roundtrip tests | DONE |
 | M10 | `forward.ml`: Message / Forward / PackedForward to typed events; CompressedPackedForward and unknown shapes to typed rejects; fixture bytes from a real fluent-bit capture | TODO |
 | M11 | ack: option-map chunk parse + ack response encode + tests | TODO |
 

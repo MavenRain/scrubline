@@ -22,3 +22,8 @@
  (name test_msgpack)
  (modules test_msgpack)
  (libraries scrubline))
+
+(test
+ (name test_encode)
+ (modules test_encode)
+ (libraries scrubline))
