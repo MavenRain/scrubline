@@ -155,6 +155,11 @@ let input_bad_utf8 (i : Gc.input_class) : bool =
   | Gc.Bad_utf8 _ -> true
   | Gc.Valid _ | Gc.Oversized _ | Gc.Malformed _ -> false
 
+let input_oversized (i : Gc.input_class) : bool =
+  match i with
+  | Gc.Oversized _ -> true
+  | Gc.Valid _ | Gc.Malformed _ | Gc.Bad_utf8 _ -> false
+
 type group =
   | G_malformed
   | G_oversized
@@ -175,15 +180,16 @@ let group_of (d : Gc.dead_reason) : group =
   | Gc.Dead_bad_utf8 _ -> G_bad_utf8
 
 (* Safe: what downstream holds is either scrubbed or was really scanned
-   clean. An unscrubbed emit of a dirty, malformed, or invalid-UTF-8
-   record is the leak (a malformed or mis-decoded blob may hold a PAN
-   nothing scanned). Only the Filter frame can reach one; oversized
-   records never emit in either frame. *)
+   clean. Every non-clean input class (dirty, malformed, invalid UTF-8,
+   or oversized) is sensitive: an unscrubbed emit of any of them is the
+   hazard, so a routing change that emits one must show up as a spec
+   failure here, not slip through as an encoding gap. *)
 let safe (w : world) : bool =
   let unscrubbed = on_stage w (fun s -> opt_exists not (emitted_flag s)) in
   let sensitive =
     on_input w (fun i ->
-        input_dirty i || input_malformed i || input_bad_utf8 i)
+        input_dirty i || input_malformed i || input_bad_utf8 i
+        || input_oversized i)
   in
   not (unscrubbed && sensitive)
 

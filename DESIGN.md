@@ -221,7 +221,11 @@ name an unscrubbed record.
 - msgpack: full decode of what forward needs; duplicate map keys rejected;
   depth <= 32; counts and string sizes capped (section 3); a u64 above
   OCaml's int range is carried opaquely as `Uint64_edge` and never
-  arithmetic; float payloads decoded bit-exact.
+  arithmetic; an i64 in [2^62, 2^63) is byte-identical to its unsigned
+  view and rides `Uint64_edge` too; an i64 below -2^62 is a typed
+  reject rather than a rounding; str, bin, and ext payloads share
+  `string_max`; array and map counts share `entries_max`; float
+  payloads decoded bit-exact.
 - UTF-8: RFC 3629. Overlong forms, surrogates, out-of-range scalars, and
   truncated sequences are each a distinct typed error. Keys and string
   values must validate; `Bin` payloads are exempt and never scanned as text
@@ -250,10 +254,10 @@ Phase B: typed decode.
 
 | M | What | Status |
 |---|------|--------|
-| M5 | `caps.ml`, `err.ml`, `reader.ml` total cursor (byte/take/u16be..u64be, no partial indexing) | TODO |
-| M6 | `utf8.ml` total validator + corpus (overlong, surrogate, out-of-range, truncation) | TODO |
-| M7 | msgpack scalar decode (nil, bool, int families with 64-bit edges, float, str/bin headers) + tests | TODO |
-| M8 | msgpack containers: array/map/ext + EventTime, depth and count caps, duplicate-key reject + tests | TODO |
+| M5 | `caps.ml`, `err.ml`, `reader.ml` total cursor (byte/take/u16be..u64be, no partial indexing) | DONE |
+| M6 | `utf8.ml` total validator + corpus (overlong, surrogate, out-of-range, truncation) | DONE |
+| M7 | msgpack scalar decode (nil, bool, int families with 64-bit edges, float, str/bin headers) + tests | DONE |
+| M8 | msgpack containers: array/map/ext + EventTime, depth and count caps, duplicate-key reject + tests | DONE |
 | M9 | msgpack encode for egress + roundtrip tests | TODO |
 | M10 | `forward.ml`: Message / Forward / PackedForward to typed events; CompressedPackedForward and unknown shapes to typed rejects; fixture bytes from a real fluent-bit capture | TODO |
 | M11 | ack: option-map chunk parse + ack response encode + tests | TODO |

@@ -7,3 +7,18 @@
  (name test_correspondence)
  (modules test_correspondence)
  (libraries scrubline_model))
+
+(test
+ (name test_reader)
+ (modules test_reader)
+ (libraries scrubline))
+
+(test
+ (name test_utf8)
+ (modules test_utf8)
+ (libraries scrubline))
+
+(test
+ (name test_msgpack)
+ (modules test_msgpack)
+ (libraries scrubline))
