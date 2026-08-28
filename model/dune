@@ -1,0 +1,8 @@
+(library
+ (name scrubline_model)
+ (wrapped false)
+ (libraries ctlk_topos)
+ (modules gate_core frame spec))
+
+(copy_files
+ (files ../lib/gate_core.ml))

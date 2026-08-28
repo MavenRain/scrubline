@@ -1,0 +1,14 @@
+opam-version: "2.0"
+synopsis: "A redaction gate for the Fluent Bit forward pipeline that cannot crash or leak a field"
+description:
+  "Typed OCaml gate speaking the Fluent Bit forward protocol: every parse path (valid, malformed, oversized, invalid UTF-8) is a compile-checked case; bad input dead-letters instead of crashing or passing through; Luhn-checked PAN, SSN, AWS-key, Solana-pubkey, and Ethereum-address detectors; Prometheus metrics."
+maintainer: "Onyeka Obi"
+authors: "Onyeka Obi"
+license: "MIT OR Apache-2.0"
+depends: [
+  "ocaml" {>= "5.1"}
+  "dune" {>= "3.0"}
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]

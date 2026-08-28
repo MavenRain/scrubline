@@ -1,0 +1,9 @@
+(test
+ (name test_model)
+ (modules test_model)
+ (libraries scrubline_model))
+
+(test
+ (name test_correspondence)
+ (modules test_correspondence)
+ (libraries scrubline_model))
