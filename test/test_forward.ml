@@ -142,6 +142,13 @@ let big_record : Msgpack.t =
          ( Msgpack.Str ("k" ^ string_of_int i),
            Msgpack.Str (String.make 250_000 'a') )))
 
+(* Review r1: a map whose pair count is over entries_max but whose bytes
+   sit far under string_max, so it rides inside a packed body. *)
+let wide_map : Msgpack.t =
+  Msgpack.Map
+    (List.init 8193 (fun i ->
+         (Msgpack.Str ("k" ^ string_of_int i), Msgpack.Int 0)))
+
 let checks : (string * bool) list =
   [
     ( "capture: v2 forward frame decodes",
@@ -341,6 +348,69 @@ let checks : (string * bool) list =
       events_err
         (Err.Oversized Gate_core.Record_over)
         (packed_frame (Msgpack.Bin (packed_n 8193)) []) );
+    (* Review r1/r2: packed entries must hit the same record rules as
+       Message/Forward, and duplicate keys must reject at every level.
+       A canonical-size mirror is unreachable in a packed body: it
+       rides a Bin capped at string_max (256 KB), far under
+       record_max, so the size dimension mirrors as the map pair-count
+       cap instead. *)
+    ( "packed: invalid utf-8 in an entry names bad_byte",
+      events_err
+        (Err.Bad_utf8 Gate_core.Bad_byte)
+        (packed_frame
+           (Msgpack.Bin
+              (enc
+                 (Msgpack.Arr
+                    [ Msgpack.Int 0;
+                      Msgpack.Map [ (Msgpack.Str "k", Msgpack.Str "\xff") ]
+                    ])))
+           []) );
+    ( "packed: deep entry value names depth_over",
+      events_err
+        (Err.Oversized Gate_core.Depth_over)
+        (packed_frame
+           (Msgpack.Bin
+              (enc
+                 (Msgpack.Arr
+                    [ Msgpack.Int 0;
+                      Msgpack.Map [ (Msgpack.Str "k", deep_value) ] ])))
+           []) );
+    ( "packed: entry map over entries_max pairs names record_over",
+      events_err
+        (Err.Oversized Gate_core.Record_over)
+        (packed_frame
+           (Msgpack.Bin (enc (Msgpack.Arr [ Msgpack.Int 0; wide_map ])))
+           []) );
+    ( "packed: duplicate keys in an entry name duplicate_key",
+      events_err
+        (Err.Malformed Gate_core.Duplicate_key)
+        (packed_frame
+           (Msgpack.Bin
+              (enc
+                 (Msgpack.Arr
+                    [ Msgpack.Int 0;
+                      Msgpack.Map
+                        [ (Msgpack.Str "a", Msgpack.Int 1);
+                          (Msgpack.Str "a", Msgpack.Int 2) ] ])))
+           []) );
+    ( "map: nested duplicate keys name duplicate_key",
+      dec_errs
+        (Err.Malformed Gate_core.Duplicate_key)
+        (enc
+           (Msgpack.Arr
+              [ app; Msgpack.Int 0;
+                Msgpack.Map
+                  [ ( Msgpack.Str "k",
+                      Msgpack.Map
+                        [ (Msgpack.Str "a", Msgpack.Int 1);
+                          (Msgpack.Str "a", Msgpack.Int 2) ] ) ] ])) );
+    ( "options: duplicate compressed keys name duplicate_key",
+      dec_errs
+        (Err.Malformed Gate_core.Duplicate_key)
+        (packed_frame (Msgpack.Bin packed2)
+           [ Msgpack.Map
+               [ (Msgpack.Str "compressed", Msgpack.Str "text");
+                 (Msgpack.Str "compressed", Msgpack.Str "gzip") ] ]) );
     ( "tag: cap length accepted",
       dec_is
         (Forward.Forward { tag = tag_cap; entries = [] }, [])

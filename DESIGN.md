@@ -98,9 +98,14 @@ module Forward : sig
     | Message of event
     | Forward of { tag : string; entries : (time * record) list }
     | Packed_forward of { tag : string; entries_bytes : string }
-  type options = (Msgpack.t * Msgpack.t) list  (* raw; M11 parses chunk *)
+  type options = (Msgpack.t * Msgpack.t) list  (* raw; Ack.chunk_of parses chunk *)
   val decode : string -> (frame * options, Err.t) result
   val events : frame -> (event list, Err.t) result
+end
+
+module Ack : sig
+  val chunk_of : Forward.options -> (string option, Err.t) result
+  val response : string -> string   (* {"ack": id}, minimal headers *)
 end
 
 module Detect : sig
@@ -256,7 +261,13 @@ name an unscrubbed record.
   capped at `record_max`, a packed frame at `entries_max` entries;
   `Err.of_msgpack` folds `Str_over` and `Count_over` onto `Record_over`
   (record-dimension caps) and `Frame_over` stays ingress-only; the
-  option map is carried raw and parsed for `chunk` only (M11).
+  option map is carried raw and parsed for `chunk` only (`Ack.chunk_of`).
+- ack: `Ack.chunk_of` reads `chunk` from the raw options: absent means
+  no ack is due (`None`); the id must be a non-empty valid-UTF-8 str,
+  any other shape a typed reject, and two `chunk` keys are
+  `Duplicate_key` even off a bare assoc list; `Ack.response` encodes
+  `{"ack": id}` with minimal headers; the session (M21) sends it only
+  after the downstream write.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -284,7 +295,7 @@ Phase B: typed decode.
 | M8 | msgpack containers: array/map/ext + EventTime, depth and count caps, duplicate-key reject + tests | DONE |
 | M9 | msgpack encode for egress + roundtrip tests | DONE |
 | M10 | `forward.ml`: Message / Forward / PackedForward to typed events; CompressedPackedForward and unknown shapes to typed rejects; fixture bytes from a real fluent-bit capture | DONE |
-| M11 | ack: option-map chunk parse + ack response encode + tests | TODO |
+| M11 | ack: option-map chunk parse + ack response encode + tests | DONE |
 
 Phase C: detectors.
 
