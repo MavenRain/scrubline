@@ -92,12 +92,15 @@ end
 
 module Forward : sig
   type time = Seconds of int | Event_time of { sec : int; nsec : int }
-  type event = { tag : string; time : time; record : (string * Msgpack.t) list }
+  type record = (string * Msgpack.t) list
+  type event = { tag : string; time : time; record : record }
   type frame =
     | Message of event
-    | Forward of { tag : string; entries : (time * (string * Msgpack.t) list) list }
+    | Forward of { tag : string; entries : (time * record) list }
     | Packed_forward of { tag : string; entries_bytes : string }
-  val decode : string -> (frame * ack_option, Gate_core.input_class) result
+  type options = (Msgpack.t * Msgpack.t) list  (* raw; M11 parses chunk *)
+  val decode : string -> (frame * options, Err.t) result
+  val events : frame -> (event list, Err.t) result
 end
 
 module Detect : sig
@@ -243,7 +246,17 @@ name an unscrubbed record.
   (documented).
 - forward: Message, Forward, PackedForward accepted; CompressedPackedForward
   and unknown shapes are typed rejects; EventTime ext type 0 (8 bytes)
-  and integer seconds accepted; the option map is parsed for `chunk` only.
+  and integer seconds >= 0 accepted; a fluent-bit v2 entry may wrap the
+  time slot as [time, metadata-map] (seen on a real 5.1.1 capture) --
+  an empty metadata map is accepted, a non-empty one is a typed reject
+  until egress defines metadata; the packed body may be bin or str;
+  `compressed: text` is accepted, `compressed: gzip` is the
+  CompressedPackedForward reject; the tag is non-empty, at most
+  `tag_max`, valid UTF-8; the canonical re-encoding of a record is
+  capped at `record_max`, a packed frame at `entries_max` entries;
+  `Err.of_msgpack` folds `Str_over` and `Count_over` onto `Record_over`
+  (record-dimension caps) and `Frame_over` stays ingress-only; the
+  option map is carried raw and parsed for `chunk` only (M11).
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -270,7 +283,7 @@ Phase B: typed decode.
 | M7 | msgpack scalar decode (nil, bool, int families with 64-bit edges, float, str/bin headers) + tests | DONE |
 | M8 | msgpack containers: array/map/ext + EventTime, depth and count caps, duplicate-key reject + tests | DONE |
 | M9 | msgpack encode for egress + roundtrip tests | DONE |
-| M10 | `forward.ml`: Message / Forward / PackedForward to typed events; CompressedPackedForward and unknown shapes to typed rejects; fixture bytes from a real fluent-bit capture | TODO |
+| M10 | `forward.ml`: Message / Forward / PackedForward to typed events; CompressedPackedForward and unknown shapes to typed rejects; fixture bytes from a real fluent-bit capture | DONE |
 | M11 | ack: option-map chunk parse + ack response encode + tests | TODO |
 
 Phase C: detectors.

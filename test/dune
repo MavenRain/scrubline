@@ -27,3 +27,8 @@
  (name test_encode)
  (modules test_encode)
  (libraries scrubline))
+
+(test
+ (name test_forward)
+ (modules test_forward)
+ (libraries scrubline))
