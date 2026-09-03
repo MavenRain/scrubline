@@ -37,3 +37,8 @@
  (name test_ack)
  (modules test_ack)
  (libraries scrubline))
+
+(test
+ (name test_detect)
+ (modules test_detect)
+ (libraries scrubline))

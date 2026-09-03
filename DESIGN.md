@@ -111,7 +111,24 @@ end
 module Detect : sig
   type detector = Pan | Ssn | Aws_key | Sol_pubkey | Eth_address
   type span = { detector : detector; start : int; stop : int }
-  val scan : string -> span list        (* leftmost, longest, priority order *)
+  type matcher = { emits : detector; find : string -> (int * int) list }
+  val priority : detector -> int        (* table order: Pan 0 .. Eth_address 4 *)
+  val to_string : detector -> string    (* token field (M18), metrics label (M23) *)
+  val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
+  val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
+  val scan_with : matcher list -> string -> span list
+  val matchers : matcher list           (* [] at M12; M13..M17 each add one *)
+  val scan : string -> span list        (* scan_with matchers *)
+  val replace : token:(detector -> string -> string)
+                -> string -> span list -> string    (* resolves first, one sweep *)
+  val tree_with : matcher list -> token:(detector -> string -> string)
+                  -> Msgpack.t -> Msgpack.t * span list
+  val tree : token:(detector -> string -> string)
+             -> Msgpack.t -> Msgpack.t * span list  (* Bin and Ext never scanned *)
+  val record_with : matcher list -> token:(detector -> string -> string)
+                    -> Forward.record -> Forward.record * span list
+  val record : token:(detector -> string -> string)
+               -> Forward.record -> Forward.record * span list
 end
 
 module Scrub : sig
@@ -154,7 +171,10 @@ record was dirty".
 | `Eth_address` | `0x` plus 40 hex chars, no alphanumeric adjacent | shorter or longer hex runs stay; EIP-55 case is not required (over-redaction is the safe side) |
 
 Overlaps resolve leftmost first, then longest, then the priority order of
-the table. The replacement token is `[REDACTED:<detector>:<fp8>]` where
+the table.  A candidate that falls outside `[0, len]`, or that is empty or
+inverted, is dropped before resolution.  A resolved span's bytes never reach
+the output: they are consumed into the token argument.  The replacement
+token is `[REDACTED:<detector>:<fp8>]` where
 `fp8` is the first 8 hex chars of `SHA-256(salt || 0x00 || canonical value)`
 via the `sha2` pin. The canonical value strips separators for PAN and SSN
 and lowercases hex for Ethereum. The same value under the same salt gets the
@@ -268,6 +288,18 @@ name an unscrubbed record.
   `Duplicate_key` even off a bare assoc list; `Ack.response` encodes
   `{"ack": id}` with minimal headers; the session (M21) sends it only
   after the downstream write.
+- detect: spans are byte offsets, half-open `[start, stop)`, into the
+  decoded UTF-8 string;  a candidate outside `[0, len]`, empty, or inverted
+  is dropped;  overlaps resolve leftmost, then longest, then the table
+  priority;  adjacent spans are both kept;  `Bin` and `Ext` payloads are
+  never scanned;  `Str` keys are scanned like values, nested map keys
+  included;  the tree walk returns spans in tree order, with offsets
+  relative to the string each span was found in;  the token function is a
+  parameter and M18 fixes its form;  the production matcher list is empty
+  until M13..M17.  Known residual: two distinct keys can scrub to the same
+  token, either a fingerprint-prefix collision or a literal token already
+  present as a key, so M18 owns the post-scrub duplicate-key check as a
+  typed `Duplicate_key` reject (fail closed) and M12 leaves the tree as is.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -301,13 +333,13 @@ Phase C: detectors.
 
 | M | What | Status |
 |---|------|--------|
-| M12 | `detect.ml` span framework: scan keys and values of the decoded tree, overlap resolution (leftmost, longest, priority), replacement application; property: no span byte survives | TODO |
+| M12 | `detect.ml` span framework: scan keys and values of the decoded tree, overlap resolution (leftmost, longest, priority), replacement application; property: no span byte survives | DONE |
 | M13 | `luhn.ml` + PAN detector + corpus (separator forms, Luhn-failing controls, embedded-run controls) | TODO |
 | M14 | SSN detector (area/group/serial rules) + corpus | TODO |
 | M15 | AWS access-key-id detector + corpus | TODO |
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | TODO |
 | M17 | Ethereum address detector + corpus | TODO |
-| M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests | TODO |
+| M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | TODO |
 | M19 | fixture corpus gate: per-detector fire and no-fire fixtures with expected scrubbed output, corpus table in `test/corpus/` | TODO |
 
 Phase D: daemon.
