@@ -116,6 +116,10 @@ module Pan : sig
   val find : string -> (int * int) list (* candidate windows; Detect stamps Pan *)
 end
 
+module Ssn : sig
+  val find : string -> (int * int) list (* candidate windows; Detect stamps Ssn *)
+end
+
 module Detect : sig
   type detector = Pan | Ssn | Aws_key | Sol_pubkey | Eth_address
   type span = { detector : detector; start : int; stop : int }
@@ -125,7 +129,7 @@ module Detect : sig
   val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
   val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
   val scan_with : matcher list -> string -> span list
-  val matchers : matcher list           (* [Pan] since M13; M14..M17 each add one *)
+  val matchers : matcher list           (* [Pan; Ssn] since M14; M15..M17 each add one *)
   val scan : string -> span list        (* scan_with matchers *)
   val replace : token:(detector -> string -> string)
                 -> string -> span list -> string    (* resolves first, one sweep *)
@@ -304,11 +308,11 @@ name an unscrubbed record.
   included;  the tree walk returns spans in tree order, with offsets
   relative to the string each span was found in;  the token function is a
   parameter and M18 fixes its form;  the production matcher list carries
-  Pan since M13 and M14..M17 each add one.  Known residual: two distinct
-  keys can scrub to the same token, either a fingerprint-prefix collision
-  or a literal token already present as a key, so M18 owns the post-scrub
-  duplicate-key check as a typed `Duplicate_key` reject (fail closed) and
-  M12 leaves the tree as is.
+  Pan since M13 and Ssn since M14, and M15..M17 each add one.  Known
+  residual: two distinct keys can scrub to the same token, either a
+  fingerprint-prefix collision or a literal token already present as a
+  key, so M18 owns the post-scrub duplicate-key check as a typed
+  `Duplicate_key` reject (fail closed) and M12 leaves the tree as is.
 - pan: a candidate window starts on a digit whose predecessor is not a
   digit and ends on a digit whose successor is not a digit;  inside it,
   digits are joined by at most one separator at a time, a single space or
@@ -316,13 +320,34 @@ name an unscrubbed record.
   total, an out-of-range digit fails closed).  Every such window is a
   candidate and `Detect.resolve` keeps the leftmost, then the longest, so
   a valid number after an unrelated short one (`100 4111...`) is still
-  found, while 20 or more contiguous digits yield nothing (every inner
-  window has a digit at one end).  A double separator, any other
-  separator (dot, slash, tab, newline), a Luhn-failing run, and a run
-  with a digit adjacent to either end all stay.  Known residual, held for
-  the M19 corpus: a number wrapped across a newline is two runs and
-  stays;  widening the separator set is a corpus decision, pinned by a
-  test until then.
+  found so long as the merged window fails Luhn, while 20 or more
+  contiguous digits yield nothing (every inner window has a digit at one
+  end).  A double separator, any other separator (dot, slash, tab,
+  newline), a Luhn-failing run, and a run with a digit adjacent to either
+  end all stay.  Known residuals, held for the M19 corpus: a number
+  wrapped across a newline is two runs and stays;  a single separator can
+  merge an unrelated short run into the number, and when the merged
+  window passes Luhn too (about one prefix in ten, as `109 4111...`
+  does), the merged leftmost window is kept and the prefix is
+  over-redacted, which is the safe side because the span still consumes
+  every card digit and nothing leaks;  the M18 canonical value of such a
+  span carries the prefix, a correlation loss and not a leak.  Widening
+  the separator set is a corpus decision, pinned by a test until then.
+- ssn: a candidate window reads as a US Social Security number in one of
+  two forms, dashed `ddd-dd-dddd` or bare `ddddddddd`;  the fourth byte
+  decides which (a dash opens the dashed form, a digit the bare one), so
+  each start yields at most one window.  It starts on a digit whose
+  predecessor is not a digit and ends on a digit whose successor is not a
+  digit (a dash, a space or a letter next to it is fine).  The area (the
+  first three digits) is not 000, not 666 and not 900..999;  the group
+  (the next two) is not 00;  the serial (the last four) is not 0000.  SSN
+  windows never overlap each other, and a PAN window that contains an
+  SSN-shaped window resolves to the PAN, which starts first (leftmost).
+  Known residuals, held for the M19 corpus: the space-separated form
+  (`123 45 6789`) stays;  numbers the SSA never issued but that satisfy
+  the rule (078-05-1120) fire;  the advertising numbers 987-65-432x
+  already stay under the 900..999 area rule.  Both residuals are pinned
+  by tests until the corpus decides.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -358,7 +383,7 @@ Phase C: detectors.
 |---|------|--------|
 | M12 | `detect.ml` span framework: scan keys and values of the decoded tree, overlap resolution (leftmost, longest, priority), replacement application; property: no span byte survives | DONE |
 | M13 | `luhn.ml` + PAN detector + corpus (separator forms, Luhn-failing controls, embedded-run controls) | DONE |
-| M14 | SSN detector (area/group/serial rules) + corpus | TODO |
+| M14 | SSN detector (area/group/serial rules) + corpus | DONE |
 | M15 | AWS access-key-id detector + corpus | TODO |
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | TODO |
 | M17 | Ethereum address detector + corpus | TODO |

@@ -47,3 +47,8 @@
  (name test_pan)
  (modules test_pan)
  (libraries scrubline))
+
+(test
+ (name test_ssn)
+ (modules test_ssn)
+ (libraries scrubline))

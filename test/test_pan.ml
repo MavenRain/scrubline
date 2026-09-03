@@ -165,9 +165,9 @@ let rec gen_cases (seed : int) (n : int) (acc : pcase list) : pcase list =
       | () when c = 9 -> 0
       | () -> c + 1
     in
-    let seed, text = layout seed (body @ [ c ]) [] in
+    let seed', text = layout seed (body @ [ c ]) [] in
     let (_ : int), broken = layout seed (body @ [ bumped ]) [] in
-    gen_cases seed (n - 1)
+    gen_cases seed' (n - 1)
       ({ text = "x" ^ text ^ "y"; broken = "x" ^ broken ^ "y" } :: acc)
 
 let cases : pcase list = gen_cases 2024 200 []
@@ -183,6 +183,16 @@ let fires (p : pcase) : bool =
 let stays (p : pcase) : bool = not (List.mem (whole p.broken) (Pan.find p.broken))
 
 let has_sep (s : string) : bool = String.contains s ' ' || String.contains s '-'
+
+(* The layout of a string: every digit reads as 'd' and the separators
+   stay, so two strings share a layout when their shapes are equal. *)
+let shape (s : string) : string =
+  String.map
+    (fun (c : char) ->
+      match () with
+      | () when is_digit c -> 'd'
+      | () -> c)
+    s
 
 let checks : (string * bool) list =
   [ (* A. Luhn *)
@@ -200,8 +210,10 @@ let checks : (string * bool) list =
     ("luhn: the empty list is the empty sum", Luhn.valid []);
     ( "luhn: visa 16 with its check digit bumped fails",
       not (luhn "4111111111111112") );
-    ("luhn: a digit above 9 fails closed", not (Luhn.valid [ 1; 10 ]));
-    ("luhn: a negative digit fails closed", not (Luhn.valid [ -1 ]));
+    ( "luhn: a lone 10 fails closed where the raw sum would close",
+      not (Luhn.valid [ 10 ]) );
+    ( "luhn: a negative digit fails closed where the raw sum would close",
+      not (Luhn.valid [ 1; -2 ]) );
     ( "luhn: 10 fails closed even where the raw sum would close",
       not (Luhn.valid [ 0; 10 ]) );
     ( "luhn: every single-digit substitution of visa 16 fails",
@@ -227,6 +239,8 @@ let checks : (string * bool) list =
       Pan.find " 4111111111111111-" = [ (1, 17) ] );
     ( "pan: a valid number after an unrelated short one is found",
       Pan.find "100 4111111111111111" = [ (4, 20) ] );
+    ( "pan: the 100 prefix stays out because the merged 19 digits fail Luhn",
+      not (luhn ("100" ^ visa16)) );
     ( "pan: two numbers in one string",
       Pan.find (visa16 ^ " " ^ mc16) = [ (0, 16); (17, 33) ] );
     ( "pan: two numbers joined by a dash",
@@ -254,6 +268,19 @@ let checks : (string * bool) list =
     ("scan: visa 16 is a Pan span", Detect.scan visa16 = [ sp 0 16 ]);
     ( "scan: the resolved span after an unrelated short number",
       Detect.scan "100 4111111111111111" = [ sp 4 20 ] );
+    (* the documented residual (DESIGN 5): one separator can merge an
+       unrelated short run into the number, and about one prefix in ten
+       closes the merged window under Luhn.  The merged leftmost span
+       then wins and over-redacts the prefix, the safe side: it still
+       consumes every card digit. *)
+    ( "pan: merge control is non-vacuous, 109 ^ visa16 passes Luhn",
+      luhn ("109" ^ visa16) );
+    ( "pan: an unrelated prefix that closes Luhn merges into one window",
+      Pan.find ("109 " ^ visa16) = [ (0, 20); (4, 20) ] );
+    ( "pan: resolution keeps the merged leftmost span, the safe side",
+      Detect.scan ("109 " ^ visa16) = [ sp 0 20 ] );
+    ( "pan: the merged span consumes every card digit",
+      scrub ("109 " ^ visa16) = "<pan>" );
     ( "scrub: a sentence",
       scrub "card 4111 1111 1111 1111 exp 12/26" = "card <pan> exp 12/26" );
     ("scrub: two numbers", scrub (visa16 ^ " " ^ mc16) = "<pan> <pan>");
@@ -278,6 +305,10 @@ let checks : (string * bool) list =
     ("sweep: 200 cases generated", List.length cases = 200);
     ("sweep: every generated layout fires as one span", List.for_all fires cases);
     ("sweep: every check-digit bump stays", List.for_all stays cases);
+    ( "sweep: every broken twin shares its layout",
+      List.for_all
+        (fun (p : pcase) -> shape p.text = shape p.broken)
+        cases );
     ( "sweep: non-vacuous, separated layouts occur",
       List.exists (fun (p : pcase) -> has_sep p.text) cases );
     ( "sweep: non-vacuous, every digit count 13..19 occurs",

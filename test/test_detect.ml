@@ -412,11 +412,13 @@ let checks : (string * bool) list =
     ( "record: no matchers is the identity",
       (let r = [ ("1234", Msgpack.Str "5678") ] in
        Detect.record_with [] ~token:marker r = (r, [])) );
-    (* I. the production surface: Pan since M13 *)
-    ( "production matcher list is Pan alone at M13",
+    (* I. the production surface: Pan since M13, Ssn since M14 *)
+    ( "production matcher list is Pan then Ssn at M14",
       List.map (fun (m : Detect.matcher) -> m.Detect.emits) Detect.matchers
-      = [ Detect.Pan ] );
+      = [ Detect.Pan; Detect.Ssn ] );
     ("production scan leaves a short digit run", Detect.scan "1234" = []);
+    ( "production scan finds an SSN",
+      Detect.scan "123-45-6789" = [ sp Detect.Ssn 0 11 ] );
     ( "production scan finds a PAN",
       Detect.scan "4111111111111111" = [ sp Detect.Pan 0 16 ] );
     ( "production tree scrubs a PAN and leaves a short run",
