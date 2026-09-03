@@ -57,3 +57,13 @@
  (name test_aws_key)
  (modules test_aws_key)
  (libraries scrubline))
+
+(test
+ (name test_base58)
+ (modules test_base58)
+ (libraries scrubline))
+
+(test
+ (name test_sol_pubkey)
+ (modules test_sol_pubkey)
+ (libraries scrubline))

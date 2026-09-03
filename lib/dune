@@ -1,4 +1,4 @@
 (library
  (name scrubline)
  (public_name scrubline)
- (modules gate_core caps err reader utf8 bytesx msgpack forward ack luhn pan ssn aws_key detect))
+ (modules gate_core caps err reader utf8 bytesx msgpack forward ack luhn pan ssn aws_key base58 sol_pubkey detect))

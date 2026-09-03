@@ -2,13 +2,16 @@
    and group B the controls that stay (the prefix without a tail, wrong
    tail lengths, a key byte at either end, case, the other AWS
    unique-id prefixes, fullwidth bytes, the secret access key);  group
-   C sweeps all 256 byte values at every position the rule constrains
-   and every tail length 0..40;  group D drives the production surface,
-   which carries Pan, Ssn and Aws_key at M15, including the overlaps
-   where a key holds a PAN or an SSN in its tail;  group E is a
-   deterministic sweep over generated keys in lowercase context, each
-   with a broken twin.  Bare [Aws_key.find] pins are exact: every start
-   yields at most one window, so the whole result is pinned. *)
+   C sweeps all 256 byte values at the eight positions it names (the
+   two neighbours, the four prefix bytes, the first tail byte and the
+   last one) and every tail length 0..40.  Tail places 1..14 get no
+   256-byte sweep;  the length sweep and group E cover them.  Group D
+   drives the production surface, which carries Pan, Ssn and Aws_key
+   at M15, including the overlaps where a key holds a PAN or an SSN in
+   its tail;  group E is a deterministic sweep over generated keys in
+   lowercase context, each with a broken twin.  Bare [Aws_key.find]
+   pins are exact: every start yields at most one window, so the whole
+   result is pinned. *)
 
 open Scrubline
 
@@ -129,6 +132,10 @@ let t4 : string = "123-45-6789" ^ ex
 
 let t5 : string = ex ^ "123-45-6789"
 
+(* An SSN whose first three digits are the last three tail bytes, so
+   the candidate starts inside the window and ends past it. *)
+let t6 : string = "AKIAABCDEFGHIJKLX123-45-6789"
+
 let has_key (s : string) : bool =
   List.exists
     (fun (x : Detect.span) -> x.Detect.detector = Detect.Aws_key)
@@ -147,6 +154,11 @@ let fire_corpus : string list =
 (* E. the 36 key bytes, one tail byte per LCG step. *)
 let key_chars : char list =
   List.of_seq (String.to_seq "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+(* The window alphabet, written out from the DESIGN rule [A-Z0-9] and
+   not read back from Aws_key, so a sweep over it can refute a wrong
+   alphabet instead of restating it. *)
+let key_byte (b : char) : bool = List.mem b key_chars
 
 let key_char (seed : int) : char =
   Option.value ~default:'A'
@@ -168,6 +180,19 @@ let prefix_of (akia : bool) : string =
   match () with
   | () when akia -> "AKIA"
   | () -> "ASIA"
+
+(* The accepted prefix with its last byte replaced by 'B': AKIA reads
+   AKIB and ASIA reads ASIB.  One byte away from the prefix the case
+   uses, so the twin follows the case instead of a fixed literal. *)
+let wrong_prefix (p : string) : string =
+  let n : int = String.length p in
+  str_of_chars
+    (List.mapi
+       (fun (i : int) (c : char) ->
+         match () with
+         | () when i = n - 1 -> 'B'
+         | () -> c)
+       (List.of_seq (String.to_seq p)))
 
 (* The lowercase context pins the adjacency decision on every case. *)
 let wrap (left : string) (w : string) : string = left ^ w ^ "y"
@@ -192,7 +217,7 @@ let broken_of (k : int) (b : int) (p : string) (tl : char list) : string =
     wrap "x" (p ^ str_of_chars (lower_at (rem_small k 16) tl))
   | () when b = 1 -> wrap "x" (p ^ str_of_chars (drop_last tl))
   | () when b = 2 -> wrap "x" (p ^ str_of_chars tl ^ "Z")
-  | () when b = 3 -> wrap "x" ("AGPA" ^ str_of_chars tl)
+  | () when b = 3 -> wrap "x" (wrong_prefix p ^ str_of_chars tl)
   | () -> wrap "7" (p ^ str_of_chars tl)
 
 type kcase =
@@ -218,13 +243,15 @@ let rec gen_cases (seed : int) (k : int) (n : int) (acc : kcase list) :
 
 let cases : kcase list = gen_cases 2024 0 200 []
 
-(* The embedded window is the only candidate, and it is what
-   resolution keeps: the key starts before any PAN or SSN its tail
-   holds. *)
+(* The embedded window is the only candidate.  A generated tail holds
+   no PAN and no SSN: the longest digit run over the 200 texts is four,
+   and an SSN needs nine digits.  So this pins the window, not
+   resolution.  The overlap cases are t1 and t2 in group D. *)
 let fires (p : kcase) : bool =
   Aws_key.find p.text = [ (1, 21) ] && Detect.scan p.text = [ sp 1 21 ]
 
-(* The twin may still read as a PAN or an SSN;  it is never a key. *)
+(* The twin is never a key.  For the reason above it reads as no PAN
+   and no SSN either. *)
 let stays (p : kcase) : bool =
   Aws_key.find p.broken = [] && not (has_key p.broken)
 
@@ -247,7 +274,8 @@ let shows_breaking (i : int) (p : kcase) : bool =
   | () when i = 2 ->
     String.length p.broken = 23
     && String.ends_with ~suffix:"Zy" p.broken
-  | () when i = 3 -> String.starts_with ~prefix:"xAGPA" p.broken
+  | () when i = 3 && p.akia -> String.starts_with ~prefix:"xAKIB" p.broken
+  | () when i = 3 -> String.starts_with ~prefix:"xASIB" p.broken
   | () ->
     String.length p.broken = 22
     && String.starts_with ~prefix:"7A" p.broken
@@ -331,22 +359,26 @@ let checks : (string * bool) list =
     ("stay: two bytes", Aws_key.find "AK" = []);
     ("stay: three bytes", Aws_key.find "AKI" = []);
     (* C. exhaustive byte sweeps *)
+    ( "sweep-byte: the test alphabet ties to the detector's",
+      List.for_all
+        (fun (b : char) -> key_byte b = Aws_key.is_key_char b)
+        bytes );
     ( "sweep-byte: 220 successor bytes leave the window",
       sweep_count after (0, 20) = 220 );
     ( "sweep-byte: a successor closes the window exactly on the alphabet",
-      sweep_rule after (fun (b : char) -> not (Aws_key.is_key_char b)) );
+      sweep_rule after (fun (b : char) -> not (key_byte b)) );
     ( "sweep-byte: 220 predecessor bytes leave the window",
       sweep_count before (1, 21) = 220 );
     ( "sweep-byte: a predecessor closes the window exactly on the alphabet",
-      sweep_rule before (fun (b : char) -> not (Aws_key.is_key_char b)) );
+      sweep_rule before (fun (b : char) -> not (key_byte b)) );
     ( "sweep-byte: 36 last tail bytes fire",
       sweep_count last_tail (0, 20) = 36 );
     ( "sweep-byte: the last tail byte fires exactly on the alphabet",
-      sweep_rule last_tail Aws_key.is_key_char );
+      sweep_rule last_tail key_byte );
     ( "sweep-byte: 36 first tail bytes fire",
       sweep_count first_tail (0, 20) = 36 );
     ( "sweep-byte: the first tail byte fires exactly on the alphabet",
-      sweep_rule first_tail Aws_key.is_key_char );
+      sweep_rule first_tail key_byte );
     ("sweep-byte: 1 first prefix byte fires", sweep_count pre1 (0, 20) = 1);
     ( "sweep-byte: only A opens the prefix",
       sweep_rule pre1 (fun (b : char) -> b = 'A') );
@@ -405,6 +437,11 @@ let checks : (string * bool) list =
     ("scan: an SSN glued after a key", Ssn.find t5 = [ (20, 31) ]);
     ( "scan: the trailing SSN is the only span",
       Detect.scan t5 = [ sp_ssn 20 31 ] );
+    ("key: a straddling SSN leaves the window", Aws_key.find t6 = [ (0, 20) ]);
+    ( "scan: the straddling SSN is a candidate",
+      Ssn.find t6 = [ (17, 28) ] );
+    ( "scan: leftmost drops the straddler whole",
+      Detect.scan t6 = [ sp 0 20 ] );
     ( "tree: a key in a nested value is scrubbed",
       Detect.tree ~token:marker
         (Msgpack.Map [ (Msgpack.Str "key", Msgpack.Arr [ Msgpack.Str ex ]) ])

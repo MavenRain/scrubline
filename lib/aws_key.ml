@@ -15,6 +15,7 @@
    longest, then table order);  a key whose tail holds a Luhn-valid or
    an SSN-shaped digit run resolves to the key, which starts first, and
    a key right after a digit run stays, because a digit is a key byte.
+   A key right before a digit run stays for the same reason.
 
    The walk is a char-list fold: no indexing, no loop keyword, tail
    calls only;  from each start it reads at most 21 bytes. *)

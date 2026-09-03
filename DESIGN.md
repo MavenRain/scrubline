@@ -124,6 +124,16 @@ module Aws_key : sig
   val find : string -> (int * int) list (* candidate windows; Detect stamps Aws_key *)
 end
 
+module Base58 : sig
+  val value : char -> int option         (* digit value; None outside the alphabet *)
+  val is_digit : char -> bool
+  val decode : string -> string option   (* leading '1' = zero byte; None on any foreign byte *)
+end
+
+module Sol_pubkey : sig
+  val find : string -> (int * int) list (* maximal base58 runs decoding to 32 bytes; Detect stamps Sol_pubkey *)
+end
+
 module Detect : sig
   type detector = Pan | Ssn | Aws_key | Sol_pubkey | Eth_address
   type span = { detector : detector; start : int; stop : int }
@@ -133,7 +143,7 @@ module Detect : sig
   val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
   val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
   val scan_with : matcher list -> string -> span list
-  val matchers : matcher list           (* [Pan; Ssn; Aws_key] since M15; M16..M17 each add one *)
+  val matchers : matcher list           (* [Pan; Ssn; Aws_key; Sol_pubkey] since M16; M17 adds Eth_address *)
   val scan : string -> span list        (* scan_with matchers *)
   val replace : token:(detector -> string -> string)
                 -> string -> span list -> string    (* resolves first, one sweep *)
@@ -312,8 +322,8 @@ name an unscrubbed record.
   included;  the tree walk returns spans in tree order, with offsets
   relative to the string each span was found in;  the token function is a
   parameter and M18 fixes its form;  the production matcher list carries
-  Pan since M13, Ssn since M14 and Aws_key since M15, and M16..M17 each
-  add one.  Known
+  Pan since M13, Ssn since M14, Aws_key since M15 and Sol_pubkey since
+  M16, and M17 adds Eth_address.  Known
   residual: two distinct keys can scrub to the same token, either a
   fingerprint-prefix collision or a literal token already present as a
   key, so M18 owns the post-scrub duplicate-key check as a typed
@@ -362,14 +372,39 @@ name an unscrubbed record.
   and key windows never overlap each other.  A key whose tail holds a
   Luhn-valid or an SSN-shaped digit run resolves to the key, which
   starts first (leftmost);  a key glued right after a digit run stays,
-  because a digit is a key byte.  Known residuals, held for the M19
+  because a digit is a key byte, and a key glued right before a digit
+  run stays for the same reason.  Known residuals, held for the M19
   corpus: the table alphabet `[A-Z0-9]` is wider than the base32
   `[A-Z2-7]` AWS emits, so tails that hold 0, 1, 8 or 9 fire
   (over-redaction, the safe side);  the other AWS unique-id prefixes
   (AGPA, AIDA, AROA, ASCA, ...) stay;  a lowercase letter next to the
   window does not close it;  the 40-char secret access key is outside
-  the detectors table and stays.  All four residuals are pinned by tests
-  until the corpus decides.
+  the detectors table and stays;  a Pan or Ssn candidate that starts
+  inside a key window and ends past it is dropped whole by leftmost
+  resolution, so its bytes outside the key stay in the clear
+  (under-redaction).  That last one needs the key's tail bytes to
+  double as the candidate's leading digits, so it is a byte
+  coincidence, and whether resolution should keep the part outside the
+  window is an open design question the corpus decides.  All five
+  residuals are pinned by tests until the corpus decides.
+- sol_pubkey: a candidate is a maximal run of base58 bytes (the Bitcoin
+  alphabet: the digits without 0, the letters without O, I and l) whose
+  decode is exactly 32 bytes.  Any byte outside the alphabet closes a run
+  (0, O, I, l, a space, a quote, punctuation, every byte of a multi-byte
+  UTF-8 char).  The 32..44 length guard is implied by the decode length
+  (k digits denote at most k bytes, 45 denote at least 33), so it is a
+  work bound only.  Runs never overlap, so each run yields at most one
+  span.  A key whose bytes hold a Luhn-valid or an SSN-shaped digit run
+  resolves to the key, which starts first (leftmost) or is longer.  Known
+  residuals, held for the M19 corpus: a key glued to a byte outside the
+  alphabet still fires (the safe side);  a key glued to a digit run or to
+  another base58 token merges into a longer run and stays unless the
+  merged run itself decodes to 32 bytes (under-redaction);  about 15 of
+  16 random 43-char base58 runs and about 1 of 4 44-char runs decode to
+  32 bytes and fire, so base58 text that is not a key can fire
+  (over-redaction, the safe side);  runs of 45 bytes or more never fire,
+  and runs whose decode has any other length stay.  All four residuals
+  are pinned by tests until the corpus decides.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -407,7 +442,7 @@ Phase C: detectors.
 | M13 | `luhn.ml` + PAN detector + corpus (separator forms, Luhn-failing controls, embedded-run controls) | DONE |
 | M14 | SSN detector (area/group/serial rules) + corpus | DONE |
 | M15 | AWS access-key-id detector + corpus | DONE |
-| M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | TODO |
+| M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | DONE |
 | M17 | Ethereum address detector + corpus | TODO |
 | M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | TODO |
 | M19 | fixture corpus gate: per-detector fire and no-fire fixtures with expected scrubbed output, corpus table in `test/corpus/` | TODO |

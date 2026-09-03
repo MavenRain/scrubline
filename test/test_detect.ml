@@ -412,10 +412,11 @@ let checks : (string * bool) list =
     ( "record: no matchers is the identity",
       (let r = [ ("1234", Msgpack.Str "5678") ] in
        Detect.record_with [] ~token:marker r = (r, [])) );
-    (* I. the production surface: Pan since M13, Ssn since M14, Aws_key since M15 *)
-    ( "production matcher list is Pan, Ssn then Aws_key at M15",
+    (* I. the production surface: Pan since M13, Ssn since M14,
+       Aws_key since M15, Sol_pubkey since M16 *)
+    ( "production matcher list is Pan, Ssn, Aws_key then Sol_pubkey at M16",
       List.map (fun (m : Detect.matcher) -> m.Detect.emits) Detect.matchers
-      = [ Detect.Pan; Detect.Ssn; Detect.Aws_key ] );
+      = [ Detect.Pan; Detect.Ssn; Detect.Aws_key; Detect.Sol_pubkey ] );
     ("production scan leaves a short digit run", Detect.scan "1234" = []);
     ( "production scan finds an SSN",
       Detect.scan "123-45-6789" = [ sp Detect.Ssn 0 11 ] );
@@ -423,6 +424,9 @@ let checks : (string * bool) list =
       Detect.scan "4111111111111111" = [ sp Detect.Pan 0 16 ] );
     ( "production scan finds an AWS key",
       Detect.scan "AKIAIOSFODNN7EXAMPLE" = [ sp Detect.Aws_key 0 20 ] );
+    ( "production scan finds a Solana pubkey",
+      Detect.scan "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      = [ sp Detect.Sol_pubkey 0 43 ] );
     ( "production tree scrubs a PAN and leaves a short run",
       Detect.tree ~token:marker
         (Msgpack.Arr [ Msgpack.Str "1234"; Msgpack.Str "4111111111111111" ])
