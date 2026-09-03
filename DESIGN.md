@@ -134,6 +134,10 @@ module Sol_pubkey : sig
   val find : string -> (int * int) list (* maximal base58 runs decoding to 32 bytes; Detect stamps Sol_pubkey *)
 end
 
+module Eth_address : sig
+  val find : string -> (int * int) list (* 0x plus 40 hex, no alphanumeric neighbour; Detect stamps Eth_address *)
+end
+
 module Detect : sig
   type detector = Pan | Ssn | Aws_key | Sol_pubkey | Eth_address
   type span = { detector : detector; start : int; stop : int }
@@ -143,7 +147,7 @@ module Detect : sig
   val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
   val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
   val scan_with : matcher list -> string -> span list
-  val matchers : matcher list           (* [Pan; Ssn; Aws_key; Sol_pubkey] since M16; M17 adds Eth_address *)
+  val matchers : matcher list           (* [Pan; Ssn; Aws_key; Sol_pubkey; Eth_address] since M17: the table is complete *)
   val scan : string -> span list        (* scan_with matchers *)
   val replace : token:(detector -> string -> string)
                 -> string -> span list -> string    (* resolves first, one sweep *)
@@ -322,8 +326,8 @@ name an unscrubbed record.
   included;  the tree walk returns spans in tree order, with offsets
   relative to the string each span was found in;  the token function is a
   parameter and M18 fixes its form;  the production matcher list carries
-  Pan since M13, Ssn since M14, Aws_key since M15 and Sol_pubkey since
-  M16, and M17 adds Eth_address.  Known
+  Pan since M13, Ssn since M14, Aws_key since M15, Sol_pubkey since M16
+  and Eth_address since M17, the whole table.  Known
   residual: two distinct keys can scrub to the same token, either a
   fingerprint-prefix collision or a literal token already present as a
   key, so M18 owns the post-scrub duplicate-key check as a typed
@@ -405,6 +409,27 @@ name an unscrubbed record.
   (over-redaction, the safe side);  runs of 45 bytes or more never fire,
   and runs whose decode has any other length stay.  All four residuals
   are pinned by tests until the corpus decides.
+- eth_address: a candidate window is 42 bytes: `0x` (a lowercase x) then
+  forty hex bytes, either case.  The byte before the window is not an
+  ASCII alphanumeric byte (or the window starts the string) and the byte
+  after it is not one (or the window ends the string);  an underscore, a
+  dash, a dot, a slash, a quote, a bracket, a space or a byte of a
+  multi-byte UTF-8 char next to it is fine.  Every `0` whose predecessor
+  is not alphanumeric opens one window attempt, so each start yields at
+  most one window and no two windows overlap.  EIP-55 case is not
+  checked: a mixed-case address fires whatever its case (the safe side).
+  An address whose hex holds a Luhn-valid or an SSN-shaped digit run
+  resolves to the address, which starts first;  no digit run crosses
+  either end of a window (both neighbours are non-digits and the `x`
+  breaks a run) and a base58 run inside the hex ends at or before the
+  window end, so no other candidate straddles an address.  Known
+  residuals, held for the M19 corpus: `0X` (an uppercase X) stays;  an
+  address glued to an alphanumeric byte on either side stays (a digit
+  run, a letter, a base58 key, two addresses back to back), and when an
+  AWS key window ends on the `0` of `0x` the key fires and the address
+  stays in the clear;  runs of 41 hex or more and of 39 hex or fewer
+  stay, and a non-hex byte inside the forty breaks the window.  All three
+  residuals are pinned by tests until the corpus decides.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -443,7 +468,7 @@ Phase C: detectors.
 | M14 | SSN detector (area/group/serial rules) + corpus | DONE |
 | M15 | AWS access-key-id detector + corpus | DONE |
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | DONE |
-| M17 | Ethereum address detector + corpus | TODO |
+| M17 | Ethereum address detector + corpus | DONE |
 | M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | TODO |
 | M19 | fixture corpus gate: per-detector fire and no-fire fixtures with expected scrubbed output, corpus table in `test/corpus/` | TODO |
 

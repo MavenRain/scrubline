@@ -124,8 +124,12 @@ let not_digit (b : char) : bool = not (Base58.is_digit b)
 
 let is_one (b : char) : bool = b = '1'
 
-(* A first digit of 1, 2 or 3 leaves the value under 2^248, which is 31
-   bytes;  a first '1' adds a zero byte to the 31-byte tail. *)
+(* This rule holds for token and for wsol, whose second byte has base58
+   value 46, below the cutoff 53.  For them a first value of 1, 2 or 3
+   leaves 3 * 58^42 + tail under 2^248, which is 31 bytes, so the run
+   stays;  a first '1' adds a zero byte to the 31-byte tail and fires.
+   With a second byte of value 53 or more a first '4' would reach 2^248
+   and fire, so the precondition below is checked, not assumed. *)
 let first_ok (b : char) : bool =
   b = '1'
   || Option.fold ~none:false ~some:(fun (v : int) -> v >= 4) (Base58.value b)
@@ -221,15 +225,20 @@ type pcase =
     broke : int }
 
 (* The twin breaks one thing, cycling over the five breakings by the
-   case index, and keeps the brackets. *)
+   case index, and keeps the brackets.  Breakings 3 and 4 are near
+   misses on purpose, so run length alone cannot carry them: 42 digits
+   denote at most 31 bytes, since 58^42 < 2^248, and a leading '1' adds
+   a zero byte, so it makes 33 bytes of a 43-digit key and pushes a
+   44-digit key to 45 digits, past the 44-digit work bound.  Both stay
+   inside or just outside the window rather than far from it. *)
 let twin_of (b : int) (key : string) : string =
   let mid : int = String.length key lsr 1 in
   match () with
   | () when b = 0 -> key ^ "22"
   | () when b = 1 -> take mid key ^ "0" ^ drop mid key
   | () when b = 2 -> take mid key ^ "l" ^ drop (mid + 1) key
-  | () when b = 3 -> take 31 key
-  | () -> key ^ key
+  | () when b = 3 -> take 42 key
+  | () -> "1" ^ key
 
 let rec gen_cases (seed : int) (k : int) (n : int) (acc : pcase list) :
     pcase list =
@@ -274,8 +283,10 @@ let shows_breaking (i : int) (p : pcase) : bool =
   | () when i = 2 ->
     String.contains p.broken 'l'
     && String.length p.broken = String.length p.text
-  | () when i = 3 -> String.length p.broken = 33
-  | () -> String.length p.broken = (2 * String.length p.key) + 2
+  | () when i = 3 -> String.length p.broken = 44
+  | () ->
+    String.length p.broken = String.length p.text + 1
+    && take 1 (drop 1 p.broken) = "1"
 
 let checks : (string * bool) list =
   [ (* A. forms that fire *)
@@ -391,6 +402,12 @@ let checks : (string * bool) list =
       sweep_count (first_replaced wsol) (0, 43) = 55 );
     ( "sweep-byte: the first byte of wsol fires on 1 and on 4 up",
       sweep_rule (first_replaced wsol) (0, 43) first_ok );
+    ( "sweep-byte: first_ok precondition, the second byte of token and \
+       of wsol has base58 value 46",
+      List.for_all
+        (fun (k : string) ->
+          Option.bind (List.nth_opt (chars k) 1) Base58.value = Some 46)
+        [ token; wsol ] );
     (* D. the production surface *)
     ("scan: a key is a Sol_pubkey span", Detect.scan token = [ sp 0 43 ]);
     ("scrub: a key", scrub token = "<sol_pubkey>");

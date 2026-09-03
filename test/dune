@@ -67,3 +67,8 @@
  (name test_sol_pubkey)
  (modules test_sol_pubkey)
  (libraries scrubline))
+
+(test
+ (name test_eth_address)
+ (modules test_eth_address)
+ (libraries scrubline))

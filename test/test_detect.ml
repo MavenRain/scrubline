@@ -413,10 +413,12 @@ let checks : (string * bool) list =
       (let r = [ ("1234", Msgpack.Str "5678") ] in
        Detect.record_with [] ~token:marker r = (r, [])) );
     (* I. the production surface: Pan since M13, Ssn since M14,
-       Aws_key since M15, Sol_pubkey since M16 *)
-    ( "production matcher list is Pan, Ssn, Aws_key then Sol_pubkey at M16",
+       Aws_key since M15, Sol_pubkey since M16, Eth_address since M17 *)
+    ( "production matcher list is Pan, Ssn, Aws_key, Sol_pubkey then \
+       Eth_address at M17",
       List.map (fun (m : Detect.matcher) -> m.Detect.emits) Detect.matchers
-      = [ Detect.Pan; Detect.Ssn; Detect.Aws_key; Detect.Sol_pubkey ] );
+      = [ Detect.Pan; Detect.Ssn; Detect.Aws_key; Detect.Sol_pubkey;
+          Detect.Eth_address ] );
     ("production scan leaves a short digit run", Detect.scan "1234" = []);
     ( "production scan finds an SSN",
       Detect.scan "123-45-6789" = [ sp Detect.Ssn 0 11 ] );
