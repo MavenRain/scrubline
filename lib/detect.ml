@@ -1,8 +1,8 @@
 (* M12: the span framework.  This module owns candidate hygiene,
    overlap resolution, replacement application, and the walk over a
    decoded tree.  A [matcher] is the plug-in point and [matchers] is
-   the production list: it carries Pan since M13 and Ssn since M14,
-   and M15..M17 add the rest.
+   the production list: it carries Pan since M13, Ssn since M14 and
+   Aws_key since M15, and M16..M17 add the rest.
 
    A span is a pair of byte offsets, half-open [start, stop), into the
    decoded UTF-8 string it was found in.  Offsets are per string, not
@@ -88,10 +88,12 @@ let scan_with (ms : matcher list) (s : string) : span list =
     ms
   |> resolve ~len:(String.length s)
 
-(* Pan since M13, Ssn since M14.  M15..M17 each add one entry, in
-   table order. *)
+(* Pan since M13, Ssn since M14, Aws_key since M15.  M16..M17 each add
+   one entry, in table order. *)
 let matchers : matcher list =
-  [ { emits = Pan; find = Pan.find }; { emits = Ssn; find = Ssn.find } ]
+  [ { emits = Pan; find = Pan.find };
+    { emits = Ssn; find = Ssn.find };
+    { emits = Aws_key; find = Aws_key.find } ]
 
 let scan (s : string) : span list = scan_with matchers s
 

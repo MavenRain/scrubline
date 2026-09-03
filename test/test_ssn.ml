@@ -241,6 +241,26 @@ let shape (s : string) : string =
       | () -> c)
     s
 
+(* The twin with its dashes removed: "x" ^ nine digits ^ "y", so in
+   either layout the area is bytes 1..3, the group 4..5 and the
+   serial 6..9. *)
+let bare_of (s : string) : string =
+  String.concat "" (String.split_on_char '-' s)
+
+let byte_at (s : string) (i : int) : char option =
+  List.nth_opt (List.of_seq (String.to_seq s)) i
+
+(* What the twin text itself must show for each breaking.  This
+   reads the produced string, not the recorded index. *)
+let shows_breaking (i : int) (p : scase) : bool =
+  let b = bare_of p.broken in
+  match () with
+  | () when i = 0 -> String.starts_with ~prefix:"x000" b
+  | () when i = 1 -> String.starts_with ~prefix:"x666" b
+  | () when i = 2 -> byte_at b 1 = Some '9'
+  | () when i = 3 -> byte_at b 4 = Some '0' && byte_at b 5 = Some '0'
+  | () -> String.ends_with ~suffix:"0000y" b
+
 let checks : (string * bool) list =
   [ (* A. forms that fire *)
     ("ssn: the dashed form", Ssn.find "123-45-6789" = [ (0, 11) ]);
@@ -443,9 +463,24 @@ let checks : (string * bool) list =
       List.exists (fun (p : scase) -> p.dashed) cases );
     ( "sweep: non-vacuous, bare layouts occur",
       List.exists (fun (p : scase) -> not p.dashed) cases );
-    ( "sweep: non-vacuous, each of the five breakings occurs",
+    ( "sweep: non-vacuous, each of the five breakings shows in a twin",
       List.for_all
-        (fun (i : int) -> List.exists (fun (p : scase) -> p.broke = i) cases)
+        (fun (i : int) ->
+          List.exists
+            (fun (p : scase) -> p.broke = i && shows_breaking i p)
+            cases)
+        (List.init 5 Fun.id) );
+    ( "sweep: every twin shows the breaking recorded for it",
+      List.for_all (fun (p : scase) -> shows_breaking p.broke p) cases );
+    ( "sweep: every twin differs from its text",
+      List.for_all (fun (p : scase) -> p.broken <> p.text) cases );
+    ( "sweep: non-vacuous, each breaking occurs in both layouts",
+      List.for_all
+        (fun (i : int) ->
+          List.exists (fun (p : scase) -> p.broke = i && p.dashed) cases
+          && List.exists
+               (fun (p : scase) -> p.broke = i && not p.dashed)
+               cases)
         (List.init 5 Fun.id) );
     ( "sweep: non-vacuous, an area starting with 0 occurs",
       List.exists (fun (p : scase) -> p.a1 = 0) cases );

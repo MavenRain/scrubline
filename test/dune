@@ -52,3 +52,8 @@
  (name test_ssn)
  (modules test_ssn)
  (libraries scrubline))
+
+(test
+ (name test_aws_key)
+ (modules test_aws_key)
+ (libraries scrubline))
