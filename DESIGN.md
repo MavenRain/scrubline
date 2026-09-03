@@ -145,7 +145,7 @@ module Detect : sig
   val priority : detector -> int        (* table order: Pan 0 .. Eth_address 4 *)
   val to_string : detector -> string    (* token field (M18), metrics label (M23) *)
   val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
-  val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
+  val resolve : len:int -> span list -> span list   (* leftmost, longest, priority, then union (M18b) *)
   val scan_with : matcher list -> string -> span list
   val matchers : matcher list           (* [Pan; Ssn; Aws_key; Sol_pubkey; Eth_address] since M17: the table is complete *)
   val scan : string -> span list        (* scan_with matchers *)
@@ -209,8 +209,16 @@ value at all: `Scrub.record` returns the `Duplicate_key` reject instead.
 | `Eth_address` | `0x` plus 40 hex chars, no alphanumeric adjacent | shorter or longer hex runs stay; EIP-55 case is not required (over-redaction is the safe side) |
 
 Overlaps resolve leftmost first, then longest, then the priority order of
-the table.  A candidate that falls outside `[0, len]`, or that is empty or
-inverted, is dropped before resolution.  A resolved span's bytes never reach
+the table, and since M18b the kept span absorbs every candidate that
+strictly overlaps it (union): its end grows to cover the loser, its
+detector stays, and absorption chains through the grown cover.  So every
+well-formed candidate lies inside exactly one resolved span and no
+candidate byte survives;  touching spans both survive.  A candidate that
+falls outside `[0, len]`, or that is empty or inverted, is dropped before
+resolution.  The token of an absorbed cover fingerprints the whole cover
+under the winner's canonical form, so a straddled occurrence fingerprints
+differently from the same value standing alone (a correlation loss, not a
+leak).  A resolved span's bytes never reach
 the output: they are consumed into the token argument.  The replacement
 token is `[REDACTED:<detector>:<fp8>]` where
 `fp8` is the first 8 hex chars of `SHA-256(salt || 0x00 || canonical value)`
@@ -329,7 +337,8 @@ name an unscrubbed record.
 - detect: spans are byte offsets, half-open `[start, stop)`, into the
   decoded UTF-8 string;  a candidate outside `[0, len]`, empty, or inverted
   is dropped;  overlaps resolve leftmost, then longest, then the table
-  priority;  adjacent spans are both kept;  `Bin` and `Ext` payloads are
+  priority, and the kept span absorbs every candidate that strictly
+  overlaps it (M18b union);  adjacent spans are both kept;  `Bin` and `Ext` payloads are
   never scanned;  `Str` keys are scanned like values, nested map keys
   included;  the tree walk returns spans in tree order, with offsets
   relative to the string each span was found in;  the token function is a
@@ -345,7 +354,8 @@ name an unscrubbed record.
   digits are joined by at most one separator at a time, a single space or
   a single dash;  it holds 13..19 digits and they pass Luhn (`Luhn.valid`,
   total, an out-of-range digit fails closed).  Every such window is a
-  candidate and `Detect.resolve` keeps the leftmost, then the longest, so
+  candidate and `Detect.resolve` keeps the leftmost, then the longest, and
+  absorbs the inner windows (M18b union), so
   a valid number after an unrelated short one (`100 4111...`) is still
   found so long as the merged window fails Luhn, while 20 or more
   contiguous digits yield nothing (every inner window has a digit at one
@@ -369,7 +379,10 @@ name an unscrubbed record.
   first three digits) is not 000, not 666 and not 900..999;  the group
   (the next two) is not 00;  the serial (the last four) is not 0000.  SSN
   windows never overlap each other, and a PAN window that contains an
-  SSN-shaped window resolves to the PAN, which starts first (leftmost).
+  SSN-shaped window resolves to the PAN, which starts first (leftmost) and
+  absorbs it (M18b union);  a dashed SSN that straddles the right edge of
+  an Ethereum address window is absorbed into the address span the same
+  way, so none of its bytes survive.
   Known residuals, held for the M19 corpus: the space-separated form
   (`123 45 6789`) stays;  numbers the SSA never issued but that satisfy
   the rule (078-05-1120) fire;  the advertising numbers 987-65-432x
@@ -383,22 +396,23 @@ name an unscrubbed record.
   predecessor is not a key byte, so each start yields at most one window
   and key windows never overlap each other.  A key whose tail holds a
   Luhn-valid or an SSN-shaped digit run resolves to the key, which
-  starts first (leftmost);  a key glued right after a digit run stays,
-  because a digit is a key byte, and a key glued right before a digit
-  run stays for the same reason.  Known residuals, held for the M19
-  corpus: the table alphabet `[A-Z0-9]` is wider than the base32
-  `[A-Z2-7]` AWS emits, so tails that hold 0, 1, 8 or 9 fire
+  starts first (leftmost) and absorbs it (M18b union);  a Pan or Ssn
+  candidate that starts inside a key window and ends past it is absorbed
+  the same way, so the key span grows to the candidate's end and no digit
+  survives (before M18b it was dropped whole and its bytes outside the
+  key stayed in the clear).  That case needs the key's tail bytes to
+  double as the candidate's leading digits, so it is a byte coincidence;
+  the token then fingerprints the whole cover under the key's canonical
+  form, a correlation loss and not a leak.  A key glued right after a
+  digit run stays, because a digit is a key byte, and a key glued right
+  before a digit run stays for the same reason.  Known residuals, held
+  for the M19 corpus: the table alphabet `[A-Z0-9]` is wider than the
+  base32 `[A-Z2-7]` AWS emits, so tails that hold 0, 1, 8 or 9 fire
   (over-redaction, the safe side);  the other AWS unique-id prefixes
   (AGPA, AIDA, AROA, ASCA, ...) stay;  a lowercase letter next to the
   window does not close it;  the 40-char secret access key is outside
-  the detectors table and stays;  a Pan or Ssn candidate that starts
-  inside a key window and ends past it is dropped whole by leftmost
-  resolution, so its bytes outside the key stay in the clear
-  (under-redaction).  That last one needs the key's tail bytes to
-  double as the candidate's leading digits, so it is a byte
-  coincidence, and whether resolution should keep the part outside the
-  window is an open design question the corpus decides.  All five
-  residuals are pinned by tests until the corpus decides.
+  the detectors table and stays.  All four residuals are pinned by tests
+  until the corpus decides.
 - sol_pubkey: a candidate is a maximal run of base58 bytes (the Bitcoin
   alphabet: the digits without 0, the letters without O, I and l) whose
   decode is exactly 32 bytes.  Any byte outside the alphabet closes a run
@@ -407,7 +421,8 @@ name an unscrubbed record.
   (k digits denote at most k bytes, 45 denote at least 33), so it is a
   work bound only.  Runs never overlap, so each run yields at most one
   span.  A key whose bytes hold a Luhn-valid or an SSN-shaped digit run
-  resolves to the key, which starts first (leftmost) or is longer.  Known
+  resolves to the key, which starts first (leftmost) or is longer, and
+  absorbs it (M18b union).  Known
   residuals, held for the M19 corpus: a key glued to a byte outside the
   alphabet still fires (the safe side);  a key glued to a digit run or to
   another base58 token merges into a longer run and stays unless the
@@ -427,10 +442,15 @@ name an unscrubbed record.
   most one window and no two windows overlap.  EIP-55 case is not
   checked: a mixed-case address fires whatever its case (the safe side).
   An address whose hex holds a Luhn-valid or an SSN-shaped digit run
-  resolves to the address, which starts first;  no digit run crosses
-  either end of a window (both neighbours are non-digits and the `x`
-  breaks a run) and a base58 run inside the hex ends at or before the
-  window end, so no other candidate straddles an address.  Known
+  resolves to the address, which starts first and absorbs it (M18b
+  union);  no contiguous digit run crosses either end of a window (both
+  neighbours are non-digits and the `x` breaks a run) and a base58 run
+  inside the hex ends at or before the window end, but a dashed SSN can
+  straddle the right edge, since its groups join across `-`, a legal
+  window successor (`0x` + 37 hex + `123-45-6789`);  since M18b the
+  union absorbs it into the address span, so no byte of it survives.  A
+  PAN with one space separator can straddle the left edge the same way
+  (`400000000000001 0x...`) and is absorbed into the PAN span.  Known
   residuals, held for the M19 corpus: `0X` (an uppercase X) stays;  an
   address glued to an alphanumeric byte on either side stays (a digit
   run, a letter, a base58 key, two addresses back to back), and when an
@@ -502,6 +522,7 @@ Phase C: detectors.
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | DONE |
 | M17 | Ethereum address detector + corpus | DONE |
 | M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | DONE |
+| M18b | union in `Detect.resolve`: a kept span absorbs every overlapping candidate, so no candidate byte survives; the token fingerprints the whole cover | DONE |
 | M19 | fixture corpus gate: per-detector fire and no-fire fixtures with expected scrubbed output, corpus table in `test/corpus/` | TODO |
 
 Phase D: daemon.

@@ -109,6 +109,24 @@ let tw (v : Msgpack.t) : Msgpack.t * Detect.span list =
 let rw (r : Forward.record) : Forward.record * Detect.span list =
   Detect.record_with [ digits_run 4 ] ~token:marker r
 
+(* M18b straddle fixtures across the production table.  In [p1] the
+   address window is (0, 42) and the dashed SSN is (39, 50): its groups
+   join across the '-', a legal window successor.  In [p2] the key
+   window is (0, 20) and the spaced PAN is (16, 35).  In [p3] the PAN
+   with one space separator is (0, 17) and the address window opens on
+   the '0' after the space, (16, 58);  a digit glued before 0x blocks
+   the window ([p3_glued]), so the space is the nearest fixture in the
+   class where both fire. *)
+let p1 : string = "0x" ^ String.make 37 'a' ^ "123-45-6789"
+
+let p2 : string = "AKIAIOSFODNN7EXA4111 1111 1111 1111"
+
+let p3 : string = "400000000000001 0x" ^ String.make 40 'a'
+
+let p3_glued : string = "400000000000001" ^ "0x" ^ String.make 40 'a'
+
+let prod (s : string) : Detect.span list = Detect.scan_with Detect.matchers s
+
 (* Property sweep support.  A deterministic LCG, so the sweep is the
    same run to run and takes nothing from the environment. *)
 let next (seed : int) : int = (seed * 1103515245 + 12345) land 0x3fffffff
@@ -208,6 +226,16 @@ let token_bytes (r : Detect.span list) : int =
       n + String.length (marker x.Detect.detector ""))
     0 r
 
+(* [w] lies inside [x]. *)
+let inside (w : Detect.span) (x : Detect.span) : bool =
+  x.Detect.start <= w.Detect.start && w.Detect.stop <= x.Detect.stop
+
+(* [x] starts on some candidate's start and stops on some candidate's
+   stop, the M18b replacement for the subset property. *)
+let on_edges (wf : Detect.span list) (x : Detect.span) : bool =
+  List.exists (fun (w : Detect.span) -> w.Detect.start = x.Detect.start) wf
+  && List.exists (fun (w : Detect.span) -> w.Detect.stop = x.Detect.stop) wf
+
 let sweep (p : gcase -> bool) : bool = List.for_all p cases
 
 let checks : (string * bool) list =
@@ -237,9 +265,9 @@ let checks : (string * bool) list =
     ("resolve of nothing is nothing", Detect.resolve ~len:8 [] = []);
     ( "resolve keeps a lone well-formed span",
       Detect.resolve ~len:8 [ sp Detect.Ssn 2 5 ] = [ sp Detect.Ssn 2 5 ] );
-    ( "leftmost beats a longer span that starts later",
+    ( "leftmost absorbs a longer span that starts later",
       Detect.resolve ~len:12 [ sp Detect.Ssn 2 10; sp Detect.Pan 0 3 ]
-      = [ sp Detect.Pan 0 3 ] );
+      = [ sp Detect.Pan 0 10 ] );
     ( "same start: longest wins over higher priority",
       Detect.resolve ~len:8 [ sp Detect.Pan 0 3; sp Detect.Ssn 0 5 ]
       = [ sp Detect.Ssn 0 5 ] );
@@ -252,10 +280,30 @@ let checks : (string * bool) list =
     ( "adjacent spans both survive",
       Detect.resolve ~len:8 [ sp Detect.Pan 0 2; sp Detect.Ssn 2 4 ]
       = [ sp Detect.Pan 0 2; sp Detect.Ssn 2 4 ] );
-    ( "a one-byte overlap drops the later span",
+    ( "a one-byte overlap is absorbed and absorption chains",
       Detect.resolve ~len:8
         [ sp Detect.Pan 0 3; sp Detect.Ssn 2 5; sp Detect.Aws_key 3 6 ]
-      = [ sp Detect.Pan 0 3; sp Detect.Aws_key 3 6 ] );
+      = [ sp Detect.Pan 0 6 ] );
+    ( "a candidate inside the cover does not extend it",
+      Detect.resolve ~len:8 [ sp Detect.Pan 0 6; sp Detect.Ssn 2 4 ]
+      = [ sp Detect.Pan 0 6 ] );
+    ( "absorption does not cross a gap",
+      Detect.resolve ~len:10
+        [ sp Detect.Pan 0 3; sp Detect.Ssn 2 5; sp Detect.Aws_key 6 9 ]
+      = [ sp Detect.Pan 0 5; sp Detect.Aws_key 6 9 ] );
+    ( "the cover carries the winner's detector, not the longer loser's",
+      Detect.resolve ~len:12 [ sp Detect.Eth_address 1 12; sp Detect.Pan 0 2 ]
+      = [ sp Detect.Pan 0 12 ] );
+    ( "a span adjacent to the extended cover survives",
+      Detect.resolve ~len:8
+        [ sp Detect.Pan 0 3; sp Detect.Ssn 2 5; sp Detect.Aws_key 5 8 ]
+      = [ sp Detect.Pan 0 5; sp Detect.Aws_key 5 8 ] );
+    ( "a cover resolves to itself",
+      (let chain =
+         [ sp Detect.Pan 0 3; sp Detect.Ssn 2 5; sp Detect.Aws_key 3 6 ]
+       in
+       let once = Detect.resolve ~len:8 chain in
+       Detect.resolve ~len:8 once = once) );
     ( "output is ascending even from reversed input",
       Detect.resolve ~len:8
         [ sp Detect.Pan 4 6; sp Detect.Ssn 2 4; sp Detect.Aws_key 0 2 ]
@@ -290,9 +338,9 @@ let checks : (string * bool) list =
         [ literal ~as_:Detect.Eth_address "12"; literal ~as_:Detect.Pan "12" ]
         "12"
       = [ sp Detect.Pan 0 2 ] );
-    ( "overlapping literal occurrences keep the leftmost",
+    ( "overlapping literal occurrences merge into one cover",
       Detect.scan_with [ literal ~as_:Detect.Pan "aa" ] "aaa"
-      = [ sp Detect.Pan 0 2 ] );
+      = [ sp Detect.Pan 0 3 ] );
     (* E. replacement *)
     ("no spans leaves the string alone", rep "a1234b" [] = "a1234b");
     ( "a span in the middle becomes one token",
@@ -334,10 +382,15 @@ let checks : (string * bool) list =
           (resolved c)) );
     ( "sweep: resolved spans are ascending and disjoint",
       sweep (fun c -> ascending_disjoint (resolved c)) );
-    ( "sweep: resolved is a subset of the well-formed candidates",
-      sweep (fun c ->
-        let wf = well_formed_cands c in
-        List.for_all (fun x -> List.mem x wf) (resolved c)) );
+    ( "sweep: every resolved span starts and stops on candidate edges",
+      sweep (fun (c : gcase) ->
+        List.for_all (on_edges (well_formed_cands c)) (resolved c)) );
+    ( "sweep: every well-formed candidate lies inside exactly one span",
+      sweep (fun (c : gcase) ->
+        let r = resolved c in
+        List.for_all
+          (fun (w : Detect.span) -> List.length (List.filter (inside w) r) = 1)
+          (well_formed_cands c)) );
     ( "sweep: resolve is idempotent",
       sweep (fun c ->
         let once = resolved c in
@@ -439,12 +492,35 @@ let checks : (string * bool) list =
     (* a matcher that ignores its input still resolves cleanly *)
     ( "a constant matcher is resolved like any other",
       Detect.scan_with [ const ~as_:Detect.Ssn [ (0, 4); (2, 6) ] ] "abcdefgh"
-      = [ sp Detect.Ssn 0 4 ] );
+      = [ sp Detect.Ssn 0 6 ] );
     ( "scan_with drops negative, past-the-end and empty pairs against the scanned length",
       Detect.scan_with
         [ const ~as_:Detect.Ssn [ (-1, 2); (0, 4); (3, 3); (1, 3) ] ]
         "abc"
       = [ sp Detect.Ssn 1 3 ] );
+    (* J. straddles across the production table (M18b union) *)
+    ("straddle: the address fixture is 50 bytes", String.length p1 = 50);
+    ( "straddle: the address window and the dashed SSN both fire",
+      Eth_address.find p1 = [ (0, 42) ] && Ssn.find p1 = [ (39, 50) ] );
+    ( "straddle: the SSN off the address tail is absorbed",
+      prod p1 = [ sp Detect.Eth_address 0 50 ] );
+    ( "straddle: no SSN digit survives the address token",
+      rep p1 (prod p1) = "<eth_address>" );
+    ( "straddle: the key window and the spaced PAN both fire",
+      Aws_key.find p2 = [ (0, 20) ] && Pan.find p2 = [ (16, 35) ] );
+    ( "straddle: the PAN off the key tail is absorbed",
+      prod p2 = [ sp Detect.Aws_key 0 35 ] );
+    ( "straddle: no PAN digit survives the key token",
+      rep p2 (prod p2) = "<aws_key>" );
+    ( "straddle: the spaced PAN and the address window both fire",
+      Pan.find p3 = [ (0, 17) ] && Eth_address.find p3 = [ (16, 58) ] );
+    ( "straddle: the address off the PAN tail is absorbed",
+      prod p3 = [ sp Detect.Pan 0 58 ] );
+    ( "straddle: no address byte survives the PAN token",
+      rep p3 (prod p3) = "<pan>" );
+    ( "straddle: a digit glued before 0x blocks the window, no straddle",
+      Eth_address.find p3_glued = []
+      && prod p3_glued = [ sp Detect.Pan 0 16 ] );
   ]
 
 let () =

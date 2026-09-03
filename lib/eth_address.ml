@@ -18,13 +18,17 @@
    would only narrow the set that is redacted.
 
    Overlaps with other detectors resolve in detect.ml (leftmost, then
-   longest, then table order);  an address whose hex holds a
-   Luhn-valid or an SSN-shaped digit run resolves to the address,
-   which starts first.  No digit run crosses either end of a window,
-   because both neighbours are non-digits and the x breaks a run, and
-   a base58 run inside the hex starts after the x or after a 0 and
-   ends at or before the window end, so no candidate of another
-   detector straddles an address window.
+   longest, then table order, then the M18b union);  an address whose
+   hex holds a Luhn-valid or an SSN-shaped digit run resolves to the
+   address, which starts first and absorbs it.  No contiguous digit
+   run crosses either end of a window, because both neighbours are
+   non-digits and the x breaks a run, and a base58 run inside the hex
+   starts after the x or after a 0 and ends at or before the window
+   end.  A dashed SSN can straddle the right edge, though: its digit
+   groups join across '-', a legal window successor, so the hex tail
+   123 and a following -45-6789 read as one SSN.  Since M18b the union
+   in resolve absorbs that candidate into the address span, so no byte
+   of it survives.
 
    An address glued to an alphanumeric byte on either side stays: a
    digit run before it, a letter after it, a base58 key on either

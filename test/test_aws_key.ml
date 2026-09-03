@@ -440,8 +440,8 @@ let checks : (string * bool) list =
     ("key: a straddling SSN leaves the window", Aws_key.find t6 = [ (0, 20) ]);
     ( "scan: the straddling SSN is a candidate",
       Ssn.find t6 = [ (17, 28) ] );
-    ( "scan: leftmost drops the straddler whole",
-      Detect.scan t6 = [ sp 0 20 ] );
+    ( "scan: the M18b union absorbs the straddler into the key span",
+      Detect.scan t6 = [ sp 0 28 ] );
     ( "tree: a key in a nested value is scrubbed",
       Detect.tree ~token:marker
         (Msgpack.Map [ (Msgpack.Str "key", Msgpack.Arr [ Msgpack.Str ex ]) ])

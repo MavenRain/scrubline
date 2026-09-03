@@ -62,22 +62,34 @@ let compare_span (a : span) (b : span) : int =
     compare (span_length b) (span_length a)
   | () -> compare (priority a.detector) (priority b.detector)
 
-(* Drop the ill-formed, sort, then sweep greedily from edge 0.  The
-   output is well formed, ascending, and pairwise disjoint; adjacent
-   spans both survive.  It is a subset of the input, so identical
-   duplicates collapse to one, and it is idempotent. *)
+(* Drop the ill-formed, sort, then sweep from edge 0, where the edge is
+   the stop of the last kept span.  A candidate at or past the edge
+   starts a new span, so adjacent spans both survive.  A candidate that
+   starts before the edge strictly overlaps the last kept span and is
+   absorbed into it (M18b union): the kept span's stop grows to cover
+   the candidate, its detector stays, and the edge follows, so
+   absorption chains through the grown cover.
+
+   The output is well formed, ascending and pairwise disjoint.  Each
+   output span is the union of one maximal cluster of well-formed
+   candidates connected by strict overlap, and carries the detector of
+   the cluster's compare_span-first member.  Every well-formed
+   candidate lies inside exactly one output span, so no candidate byte
+   survives.  Identical duplicates collapse to one, and resolve is
+   idempotent: a disjoint ascending list absorbs nothing. *)
 let resolve ~(len : int) (cands : span list) : span list =
-  let kept, (_ : int) =
-    List.filter (well_formed ~len) cands
-    |> List.stable_sort compare_span
-    |> List.fold_left
-         (fun (kept, edge) (s : span) ->
-           match () with
-           | () when s.start >= edge -> (s :: kept, s.stop)
-           | () -> (kept, edge))
-         ([], 0)
+  let step (kept : span list) (s : span) : span list =
+    match kept with
+    | [] -> [ s ]
+    | k :: rest -> (
+      match () with
+      | () when s.start >= k.stop -> s :: kept
+      | () -> { k with stop = max k.stop s.stop } :: rest)
   in
-  List.rev kept
+  List.filter (well_formed ~len) cands
+  |> List.stable_sort compare_span
+  |> List.fold_left step []
+  |> List.rev
 
 let scan_with (ms : matcher list) (s : string) : span list =
   List.concat_map
