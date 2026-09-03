@@ -72,3 +72,8 @@
  (name test_eth_address)
  (modules test_eth_address)
  (libraries scrubline))
+
+(test
+ (name test_scrub)
+ (modules test_scrub)
+ (libraries scrubline))

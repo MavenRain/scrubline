@@ -8,6 +8,7 @@ license: "MIT OR Apache-2.0"
 depends: [
   "ocaml" {>= "5.1"}
   "dune" {>= "3.0"}
+  "sha2"
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

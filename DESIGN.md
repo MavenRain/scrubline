@@ -162,9 +162,16 @@ module Detect : sig
 end
 
 module Scrub : sig
+  val canonical : Detect.detector -> string -> string  (* separators dropped (Pan, Ssn); hex lowercased (Eth_address) *)
+  val fp8 : salt:string -> string -> string            (* first 8 hex of SHA-256(salt || 0x00 || value), sha2 pin *)
+  val token : salt:string -> Detect.detector -> string -> string  (* [REDACTED:<detector>:<fp8>] *)
   type scrubbed                          (* abstract; the only emit currency *)
-  val record : salt:string -> Forward.event -> scrubbed * Detect.span list
-  val encode : scrubbed -> string        (* the ONLY path to egress bytes *)
+  val tag : scrubbed -> string
+  val time : scrubbed -> Forward.time
+  val fields : scrubbed -> Forward.record
+  val record : salt:string -> Forward.event
+               -> (scrubbed * Detect.span list, Err.t) result  (* Duplicate_key fails closed *)
+  val encode : scrubbed -> string        (* the ONLY path to egress bytes: one Message frame *)
 end
 
 module Gate_core : sig                   (* shared with model/ via copy_files *)
@@ -188,7 +195,8 @@ end
 only constructor, and it runs the detector sweep unconditionally. `io/`
 egress takes `scrubbed` values only. A clean record is still a `scrubbed`
 value (with an empty span list), so the type says "the sweep ran", not "the
-record was dirty".
+record was dirty".  A record whose scrubbed keys collide has no `scrubbed`
+value at all: `Scrub.record` returns the `Duplicate_key` reject instead.
 
 ### Detectors
 
@@ -430,6 +438,30 @@ name an unscrubbed record.
   stays in the clear;  runs of 41 hex or more and of 39 hex or fewer
   stay, and a non-hex byte inside the forty breaks the window.  All three
   residuals are pinned by tests until the corpus decides.
+- scrub: the token is `[REDACTED:<detector>:<fp8>]`, where `<detector>`
+  is `Detect.to_string` and `fp8` is the first 8 lowercase hex chars of
+  SHA-256(salt || 0x00 || canonical value) via the `sha2` pin.  The
+  canonical value drops the space and dash separators of a Pan or Ssn
+  span, lowercases an Eth_address span and keeps an Aws_key or
+  Sol_pubkey span as is, so the same value gets the same token under
+  the same salt whatever its layout;  the salt is opaque bytes, an empty
+  salt is accepted and means unsalted, and a salt that ends in NUL
+  cannot be told from a value that starts with one, which no detector
+  span does (every detector alphabet excludes NUL).  `Scrub.record`
+  runs `Detect.record` over the record unconditionally, then checks
+  every map level of the result (the top-level fields and every nested
+  `Map`, the decoder's structural-equality rule) for a key that now
+  equals another, which a fingerprint-prefix collision or a literal
+  token already present as a key can produce;  a collision is
+  `Err.Malformed Duplicate_key` and no `scrubbed` value exists for that
+  record (fail closed).  The tag and the time ride verbatim and are
+  never scanned (a tag is a routing label, not payload;  held for the
+  M19 corpus).  `Scrub.encode` is the one path to egress bytes: one
+  Message frame `[tag, time, record]` with minimal headers, the time as
+  an int or the EventTime fixext 8, so `Forward.decode` reads it back
+  as the same event with no options.  A scrubbed record grows by at
+  most 14 bytes per span (a bare 9-digit SSN becomes a 23-byte token),
+  so a `record_max` record encodes under 2.5 MiB, inside `frame_max`.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -469,7 +501,7 @@ Phase C: detectors.
 | M15 | AWS access-key-id detector + corpus | DONE |
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | DONE |
 | M17 | Ethereum address detector + corpus | DONE |
-| M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | TODO |
+| M18 | `scrub.ml`: salted SHA-256 fingerprint tokens via the `sha2` pin, `scrubbed` abstract type as the only emit currency, determinism tests; also the post-scrub duplicate-key check, since two distinct keys can scrub to the same token (fingerprint-prefix collision, or a literal token already present as a key), as a typed `Duplicate_key` reject that fails closed | DONE |
 | M19 | fixture corpus gate: per-detector fire and no-fire fixtures with expected scrubbed output, corpus table in `test/corpus/` | TODO |
 
 Phase D: daemon.
