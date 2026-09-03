@@ -108,6 +108,14 @@ module Ack : sig
   val response : string -> string   (* {"ack": id}, minimal headers *)
 end
 
+module Luhn : sig
+  val valid : int list -> bool          (* digits as read; [] is the empty sum *)
+end
+
+module Pan : sig
+  val find : string -> (int * int) list (* candidate windows; Detect stamps Pan *)
+end
+
 module Detect : sig
   type detector = Pan | Ssn | Aws_key | Sol_pubkey | Eth_address
   type span = { detector : detector; start : int; stop : int }
@@ -117,7 +125,7 @@ module Detect : sig
   val well_formed : len:int -> span -> bool         (* 0 <= start < stop <= len *)
   val resolve : len:int -> span list -> span list   (* leftmost, longest, priority *)
   val scan_with : matcher list -> string -> span list
-  val matchers : matcher list           (* [] at M12; M13..M17 each add one *)
+  val matchers : matcher list           (* [Pan] since M13; M14..M17 each add one *)
   val scan : string -> span list        (* scan_with matchers *)
   val replace : token:(detector -> string -> string)
                 -> string -> span list -> string    (* resolves first, one sweep *)
@@ -295,11 +303,26 @@ name an unscrubbed record.
   never scanned;  `Str` keys are scanned like values, nested map keys
   included;  the tree walk returns spans in tree order, with offsets
   relative to the string each span was found in;  the token function is a
-  parameter and M18 fixes its form;  the production matcher list is empty
-  until M13..M17.  Known residual: two distinct keys can scrub to the same
-  token, either a fingerprint-prefix collision or a literal token already
-  present as a key, so M18 owns the post-scrub duplicate-key check as a
-  typed `Duplicate_key` reject (fail closed) and M12 leaves the tree as is.
+  parameter and M18 fixes its form;  the production matcher list carries
+  Pan since M13 and M14..M17 each add one.  Known residual: two distinct
+  keys can scrub to the same token, either a fingerprint-prefix collision
+  or a literal token already present as a key, so M18 owns the post-scrub
+  duplicate-key check as a typed `Duplicate_key` reject (fail closed) and
+  M12 leaves the tree as is.
+- pan: a candidate window starts on a digit whose predecessor is not a
+  digit and ends on a digit whose successor is not a digit;  inside it,
+  digits are joined by at most one separator at a time, a single space or
+  a single dash;  it holds 13..19 digits and they pass Luhn (`Luhn.valid`,
+  total, an out-of-range digit fails closed).  Every such window is a
+  candidate and `Detect.resolve` keeps the leftmost, then the longest, so
+  a valid number after an unrelated short one (`100 4111...`) is still
+  found, while 20 or more contiguous digits yield nothing (every inner
+  window has a digit at one end).  A double separator, any other
+  separator (dot, slash, tab, newline), a Luhn-failing run, and a run
+  with a digit adjacent to either end all stay.  Known residual, held for
+  the M19 corpus: a number wrapped across a newline is two runs and
+  stays;  widening the separator set is a corpus decision, pinned by a
+  test until then.
 - Caps are constants in `Caps`, checked before allocation, one module.
 - Handshake: HELO/PING/PONG with shared_key_hexdigest per the forward spec,
   SHA-512 via the `sha2` pin; nonce and salt are opaque bytes; a digest
@@ -334,7 +357,7 @@ Phase C: detectors.
 | M | What | Status |
 |---|------|--------|
 | M12 | `detect.ml` span framework: scan keys and values of the decoded tree, overlap resolution (leftmost, longest, priority), replacement application; property: no span byte survives | DONE |
-| M13 | `luhn.ml` + PAN detector + corpus (separator forms, Luhn-failing controls, embedded-run controls) | TODO |
+| M13 | `luhn.ml` + PAN detector + corpus (separator forms, Luhn-failing controls, embedded-run controls) | DONE |
 | M14 | SSN detector (area/group/serial rules) + corpus | TODO |
 | M15 | AWS access-key-id detector + corpus | TODO |
 | M16 | `base58.ml` total decoder + Solana pubkey detector (decode length exactly 32) + corpus | TODO |

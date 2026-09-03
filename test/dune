@@ -42,3 +42,8 @@
  (name test_detect)
  (modules test_detect)
  (libraries scrubline))
+
+(test
+ (name test_pan)
+ (modules test_pan)
+ (libraries scrubline))

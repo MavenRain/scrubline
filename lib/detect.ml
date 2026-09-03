@@ -88,8 +88,8 @@ let scan_with (ms : matcher list) (s : string) : span list =
     ms
   |> resolve ~len:(String.length s)
 
-(* Empty at M12.  M13..M17 each add one entry. *)
-let matchers : matcher list = []
+(* Pan since M13.  M14..M17 each add one entry, in table order. *)
+let matchers : matcher list = [ { emits = Pan; find = Pan.find } ]
 
 let scan (s : string) : span list = scan_with matchers s
 

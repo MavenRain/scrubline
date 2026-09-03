@@ -412,15 +412,20 @@ let checks : (string * bool) list =
     ( "record: no matchers is the identity",
       (let r = [ ("1234", Msgpack.Str "5678") ] in
        Detect.record_with [] ~token:marker r = (r, [])) );
-    (* I. the production surface at M12 *)
-    ("production matcher list is empty at M12", Detect.matchers = []);
-    ("production scan finds nothing at M12", Detect.scan "1234" = []);
-    ( "production tree is the identity at M12",
-      Detect.tree ~token:marker (Msgpack.Str "1234")
-      = (Msgpack.Str "1234", []) );
-    ( "production record is the identity at M12",
-      (let r = [ ("k", Msgpack.Str "1234") ] in
-       Detect.record ~token:marker r = (r, [])) );
+    (* I. the production surface: Pan since M13 *)
+    ( "production matcher list is Pan alone at M13",
+      List.map (fun (m : Detect.matcher) -> m.Detect.emits) Detect.matchers
+      = [ Detect.Pan ] );
+    ("production scan leaves a short digit run", Detect.scan "1234" = []);
+    ( "production scan finds a PAN",
+      Detect.scan "4111111111111111" = [ sp Detect.Pan 0 16 ] );
+    ( "production tree scrubs a PAN and leaves a short run",
+      Detect.tree ~token:marker
+        (Msgpack.Arr [ Msgpack.Str "1234"; Msgpack.Str "4111111111111111" ])
+      = (Msgpack.Arr [ Msgpack.Str "1234"; Msgpack.Str "<pan>" ], [ sp Detect.Pan 0 16 ]) );
+    ( "production record scrubs a PAN key and leaves a short value",
+      Detect.record ~token:marker [ ("4111111111111111", Msgpack.Str "1234") ]
+      = ([ ("<pan>", Msgpack.Str "1234") ], [ sp Detect.Pan 0 16 ]) );
     (* a matcher that ignores its input still resolves cleanly *)
     ( "a constant matcher is resolved like any other",
       Detect.scan_with [ const ~as_:Detect.Ssn [ (0, 4); (2, 6) ] ] "abcdefgh"
